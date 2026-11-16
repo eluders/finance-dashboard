@@ -67,6 +67,7 @@ table.summary .total { font-weight: 600; border-left: 1px solid var(--line); }
 table.summary .avg { color: var(--muted); }
 tr.group-row { background: #f6f7fa !important; }
 tr.group-row td { font-weight: 600; border-top: 1px solid #d9dce3; }
+table.summary tr.group-row td.num:not(.stray):not(.good):not(.last-year) { font-weight: 700; color: #141a26; }
 tr.cat-line td.label { padding-left: 4px; }
 tr.uncat-row td { color: var(--muted); font-style: italic; }
 
@@ -241,7 +242,7 @@ tr.cat-line .agg-pred { font-weight: 400; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { background: var(--accent); color: #fff; }
 /* predicted values are dark orange everywhere */
-:root { --pred: #b4520a; }
+:root { --pred: #c8702e; }
 table.summary .pred, table.summary .pred a { color: var(--pred); }
 table.summary th.pred { color: var(--pred); border-left: 1px solid var(--line); }
 /* prediction rows under each category (Summary → Predictions) */
@@ -295,3 +296,9 @@ tr:hover .note-btn { color: #8a909c; }
 .archived-row { padding: 3px 0 3px 26px; }
 .archived-row > input:not(.archive-month) { color: var(--muted); font-style: italic; }
 .archived-row .group-of { min-width: 110px; font-size: 12px; }
+
+/* Summary: last financial year's actual total, at the far right (no predictions) */
+.sum-tables col.c-last { width: 84px; }
+table.summary .last-year { color: #a3a8b3; border-left: 1px solid var(--line); font-weight: 400; }
+table.summary tr.group-row .last-year { font-weight: 600; color: #959aa6; }
+table.summary th.last-year { color: #a3a8b3; }

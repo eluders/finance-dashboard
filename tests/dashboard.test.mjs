@@ -139,17 +139,17 @@ test("split with a Remaining row: only one remainder, live math, applied locally
 
 test("summary: per-category monthly sums (split parts counted separately), group + subtotal rows", async () => {
   await go("#summary");
-  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Total", "Avg / mo", "Monthly"], "all 12 months of the financial year, even ones still ahead");
-  assert.deepEqual(sumCells("Subscriptions"), ["$13", ...Array(11).fill(""), "$13", "$13", ""]);
-  assert.deepEqual(sumCells("Groceries"), ["$60", ...Array(11).fill(""), "$60", "$60", ""]);
-  assert.deepEqual(sumCells("Health & Medical"), ["$13", ...Array(11).fill(""), "$13", "$13", ""]); // the $12.50 split part
+  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Total", "Avg / mo", "Monthly", "Last year"], "all 12 months of the financial year, even ones still ahead");
+  assert.deepEqual(sumCells("Subscriptions"), ["$13", ...Array(11).fill(""), "$13", "$13", "", ""]);
+  assert.deepEqual(sumCells("Groceries"), ["$60", ...Array(11).fill(""), "$60", "$60", "", ""]);
+  assert.deepEqual(sumCells("Health & Medical"), ["$13", ...Array(11).fill(""), "$13", "$13", "", ""]); // the $12.50 split part
   assert.equal(sumRow("Food").classList.contains("group-row"), true);
-  assert.deepEqual(sumCells("Food"), ["$60", ...Array(11).fill(""), "$60", "$60", ""]);
+  assert.deepEqual(sumCells("Food"), ["$60", ...Array(11).fill(""), "$60", "$60", "", ""]);
   assert.equal(sumRow("Subtotal"), undefined, "the group header row is the subtotal");
   assert.equal(sumRow("Food").closest(".sum-block").querySelector("tr"), sumRow("Food"), "each group is its own table, header row first");
   assert.ok($$("#summaryBody .sum-block").length > 3);
-  assert.equal($$("#summaryBody .sum-head thead th").length, 16, "one column header for all the tables");
-  assert.deepEqual(sumCells("Uncategorized"), ["$8", ...Array(11).fill(""), "$8", "$8", ""]); // the $7.50 remainder has no category
+  assert.equal($$("#summaryBody .sum-head thead th").length, 17, "one column header for all the tables");
+  assert.deepEqual(sumCells("Uncategorized"), ["$8", ...Array(11).fill(""), "$8", "$8", "", ""]); // the $7.50 remainder has no category
   assert.equal(sumCells("Travel").join(""), "", "unused categories are listed, blank");
 });
 
@@ -547,14 +547,15 @@ test("predictions inline: a row under each category, Monthly at the far right; l
   // every category has a prediction row right under it; the Monthly box is the last column
   assert.equal($("#sumPred").classList.contains("on"), true, "predictions shown by default");
   const heads = $$("#summaryBody thead th").map((th) => th.textContent);
-  assert.deepEqual(heads.slice(-3), ["Total", "Avg / mo", "Monthly"], "no separate Predicted / mo column");
+  assert.deepEqual(heads.slice(-4), ["Total", "Avg / mo", "Monthly", "Last year"], "no separate Predicted / mo column; Last year at the far right");
   const predRow = (label) => sumRow(label).nextElementSibling;
   assert.ok(predRow("Travel").classList.contains("pred-row"));
   const inputsOf = (label) => [...predRow(label).querySelectorAll("input")];
   const months = inputsOf("Travel").slice(0, 12);
   const monthly = inputsOf("Travel")[12];
   assert.equal(inputsOf("Travel").length, 13);
-  assert.equal(monthly.closest("td"), predRow("Travel").lastElementChild, "Monthly is at the far right");
+  assert.equal(monthly.closest("td"), predRow("Travel").lastElementChild.previousElementSibling, "Monthly is at the far right (before Last year)");
+  assert.equal(predRow("Travel").lastElementChild.textContent, "", "no predictions in the Last year column");
   assert.equal(months[0].closest("td").cellIndex, sumRow("Travel").children[1].cellIndex, "months line up with the actual months");
   const year = $("#sumYear").value;
 
@@ -884,4 +885,26 @@ test("Show predicted: view-only predicted amounts under the actual ones; remembe
   assert.equal(JSON.parse(localStorage.getItem("fd:summaryView")).inline, true, "remembered");
   $("#sumInline").click();
   assert.equal($$("#summaryBody .agg-pred").length, 0);
+});
+
+test("Last year: the previous financial year's actual total at the far right, gray, no predictions", async () => {
+  await go("#summary");
+  $("#sumYear").value = "2027"; fire($("#sumYear"), "change");
+  const total2027 = sumRow("Groceries").children[13].textContent;
+  const groupTotal2027 = sumRow("Food").children[13].firstChild.textContent;
+  assert.ok(total2027);
+  assert.equal($("#summaryBody .sum-head thead tr").lastElementChild.textContent, "Last year");
+  assert.match($("#summaryBody .sum-head thead tr").lastElementChild.title, /2026 \(Nov 2025 – Oct 2026\)/);
+
+  $("#sumYear").value = "2028"; fire($("#sumYear"), "change");
+  const last = sumRow("Groceries").lastElementChild;
+  assert.equal(last.textContent, total2027, "2028's Last year = 2027's total");
+  assert.ok(last.classList.contains("last-year"));
+  assert.equal(last.querySelector(".agg-pred"), null);
+  assert.equal(sumRow("Food").lastElementChild.textContent, groupTotal2027, "groups too");
+  last.click();
+  await settle();
+  assert.equal($("#filterDate").value, "fy:2027", "clicking it opens last year's transactions");
+  await go("#summary");
+  $("#sumYear").value = "2027"; fire($("#sumYear"), "change");
 });

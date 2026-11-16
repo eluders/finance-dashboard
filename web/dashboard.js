@@ -362,6 +362,10 @@ function renderTable(body) {
   const acct = $("sumAccount").value;
   const showPred = view.predict;
   const { sums, months } = monthlyTotals(year, acct);
+  // the previous financial year's total per category, for the "Last year" column (actual only)
+  const lastYear = String(+year - 1);
+  const lastSums = monthlyTotals(lastYear, acct).sums;
+  const lastTotal = (ids) => ids.reduce((a, id) => a + (lastSums.get(id) || []).reduce((x, y) => x + y, 0), 0);
   const cols = [...Array(12).keys()]; // every month of the financial year, including ones still ahead
   const yms = cols.map((m) => fyMonth(year, m, fyStart()));
   // the average covers the months that have data so far (first to last), not the empty future ones
@@ -453,7 +457,7 @@ function renderTable(body) {
    * aggCs: also show the predicted sums of these categories, small under the actual amounts, and the
    *        predicted average per month under Avg / mo.
    */
-  const line = (label, arr, { cls = "", category = null, offAt = () => false, strayAt = () => false, archived = null, aggCs = null, noteCat = null } = {}) => {
+  const line = (label, arr, { cls = "", category = null, offAt = () => false, strayAt = () => false, archived = null, aggCs = null, noteCat = null, last = 0 } = {}) => {
     const total = arr.reduce((a, b) => a + b, 0);
     const monthTds = cols.map((m) => {
       const stray = !!arr[m] && strayAt(m);
@@ -467,7 +471,8 @@ function renderTable(body) {
     const agg = aggCs ? { cs: aggCs, months: monthTds.map(withPred), total: withPred(totalTd), avg: withPred(avgTd) } : null;
     if (agg) cls += " has-agg";
     const tr = el("tr", { class: cls }, labelCell(label, category, archived, noteCat), monthTds, totalTd, avgTd,
-      showPred ? el("td", { class: "monthly-col" }) : null);
+      showPred ? el("td", { class: "monthly-col" }) : null,
+      moneyCell(last, { class: "last-year", ...(category && last ? { onclick: () => openTransactions({ category, date: `fy:${lastYear}`, account: acct }) } : {}) }));
     if (agg) aggRows.push({ ...agg, tr });
     return tr;
   };
@@ -494,12 +499,12 @@ function renderTable(body) {
     catRows.push(row);
     return el("tr", { class: "pred-row" }, el("td", { class: "label pred-label" }, "predicted"),
       inputs.map((i, m) => el("td", { class: `pcell${off(c, m) ? " off" : ""}` }, i)),
-      row.total, predAvgTd, el("td", { class: "pcell monthly-col" }, monthly));
+      row.total, predAvgTd, el("td", { class: "pcell monthly-col" }, monthly), el("td", { class: "last-year" }));
   };
 
   // identical fixed column widths in every table, so the groups line up under the one header
   const colgroup = () => el("colgroup", {}, el("col", { class: "c-label" }), cols.map(() => el("col")),
-    el("col", { class: "c-total" }), el("col", { class: "c-avg" }), showPred ? el("col", { class: "c-monthly" }) : null);
+    el("col", { class: "c-total" }), el("col", { class: "c-avg" }), showPred ? el("col", { class: "c-monthly" }) : null, el("col", { class: "c-last" }));
   const tableCls = `summary${showPred ? " with-pred" : ""}`;
   const block = (rows, cls = "") => el("div", { class: `card table-card sum-block${cls}` }, el("table", { class: tableCls }, colgroup(), el("tbody", {}, rows)));
 
@@ -508,7 +513,8 @@ function renderTable(body) {
       cols.map((m) => el("th", { class: "num", title: yms[m] }, names[m])),
       el("th", { class: "num total" }, "Total"),
       el("th", { class: "num avg", title: `${avgDiv ? `Average over the ${avgDiv} month${avgDiv === 1 ? "" : "s"} with data so far` : "No transactions yet"}. In orange under it: the predicted average (Monthly, or the year's predicted months / 12).` }, "Avg / mo"),
-      showPred ? el("th", { class: "num pred monthly-col", title: "Type an amount here to fill and lock all 12 predicted months. Leave it blank to enter single months (one-offs)." }, "Monthly") : null))));
+      showPred ? el("th", { class: "num pred monthly-col", title: "Type an amount here to fill and lock all 12 predicted months. Leave it blank to enter single months (one-offs)." }, "Monthly") : null,
+      el("th", { class: "num last-year", title: `Actual total for ${lastYear}${fyStart() !== 1 ? ` (${fyRangeText(lastYear, fyStart())})` : ""}` }, "Last year")))));
 
   const blocks = [];
   cats.groups.forEach((g, gi) => {
@@ -516,14 +522,14 @@ function renderTable(body) {
     if (g.categories.length && !cs.length) return; // every category archived before this year
     const allOff = (m) => cs.length > 0 && cs.every((c) => off(c, m));
     const anyStray = (m) => cs.some((c) => off(c, m) && catArr(c.id)[m]);
-    const rows = [paint(line(g.name, sumArr(cs.map((c) => catArr(c.id))), { cls: "group-row", category: `g:${g.id}`, aggCs: view.inline || showPred ? cs : null, offAt: allOff, strayAt: anyStray }), g, "group", `g:${g.id}`)];
+    const rows = [paint(line(g.name, sumArr(cs.map((c) => catArr(c.id))), { cls: "group-row", category: `g:${g.id}`, aggCs: view.inline || showPred ? cs : null, offAt: allOff, strayAt: anyStray, last: lastTotal(cs.map((c) => c.id)) }), g, "group", `g:${g.id}`)];
     for (const c of cs) {
-      rows.push(paint(line(c.name, catArr(c.id), { cls: `cat-line${c.archivedFrom ? " archived-cat" : ""}`, category: c.id, offAt: (m) => off(c, m), strayAt: (m) => off(c, m), archived: c.archivedFrom || null, noteCat: c, aggCs: view.inline && !showPred ? [c] : null }), g, "cat", c.id));
+      rows.push(paint(line(c.name, catArr(c.id), { cls: `cat-line${c.archivedFrom ? " archived-cat" : ""}`, category: c.id, offAt: (m) => off(c, m), strayAt: (m) => off(c, m), archived: c.archivedFrom || null, noteCat: c, aggCs: view.inline && !showPred ? [c] : null, last: lastTotal([c.id]) }), g, "cat", c.id));
       if (showPred) rows.push(paint(predCatLine(c), g, "cat"));
     }
     blocks.push(block(rows, g.sectionBreak && gi > 0 ? " section-start" : ""));
   });
-  if (sums.has(UNCAT)) blocks.push(block([line("Uncategorized", sums.get(UNCAT), { cls: "uncat-row", category: UNCAT })], " section-start"));
+  if (sums.has(UNCAT)) blocks.push(block([line("Uncategorized", sums.get(UNCAT), { cls: "uncat-row", category: UNCAT, last: lastTotal([UNCAT]) })], " section-start"));
 
   body.append(el("div", { class: "sum-tables" }, head, blocks));
   pinSummaryHead();
