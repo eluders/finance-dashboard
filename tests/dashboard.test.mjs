@@ -530,6 +530,53 @@ test("Category column: blank strip + drag select; instant Ctrl+C / Ctrl+V with n
   assert.ok(states.filter((c) => c === "subscriptions").length >= 2);
 });
 
+test("Settings → Export all data: a zip of every data-repo file + browser state, saved first, no secrets", async () => {
+  const { inflateRawSync } = await import("node:zlib");
+  const unzip = (buf) => { // reads the central directory
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const end = buf.length - 22;
+    assert.equal(dv.getUint32(end, true), 0x06054b50);
+    const out = new Map();
+    let p = dv.getUint32(end + 16, true);
+    for (let i = 0; i < dv.getUint16(end + 10, true); i++) {
+      const method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true), nameLen = dv.getUint16(p + 28, true);
+      const name = new TextDecoder().decode(buf.subarray(p + 46, p + 46 + nameLen));
+      const lo = dv.getUint32(p + 42, true);
+      const start = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true);
+      const body = buf.subarray(start, start + size);
+      out.set(name, new TextDecoder().decode(method === 8 ? inflateRawSync(body) : body));
+      p += 46 + nameLen;
+    }
+    return out;
+  };
+  localStorage.setItem("fd:settings", JSON.stringify({ ...JSON.parse(localStorage.getItem("fd:settings")), anthropicKey: "sk-ant-secret" }));
+  assert.ok(pending() > 0, "the previous test left unsaved edits");
+  let blob = null;
+  const realCreate = URL.createObjectURL;
+  URL.createObjectURL = (b) => { blob = b; return "blob:fake"; };
+  window.HTMLAnchorElement.prototype.click = function () { this.dataset.clicked = this.getAttribute("download"); };
+  try {
+    await go("#settings");
+    $("#exportBackup").click();
+    await settle();
+  } finally { URL.createObjectURL = realCreate; }
+  assert.ok(blob, "a download was started");
+  assert.match($("#backupPanel .status").textContent, /Downloaded finance-backup-\d{4}-\d{2}-\d{2}\.zip/);
+  assert.equal(pending(), 0, "pending edits were saved before exporting");
+
+  const zip = unzip(new Uint8Array(await blob.arrayBuffer()));
+  const repoFiles = [...gh.files().keys()].sort();
+  assert.deepEqual([...zip.keys()].filter((n) => n.startsWith("data/")).map((n) => n.slice(5)).sort(), repoFiles, "every data-repo file");
+  for (const f of repoFiles) assert.equal(zip.get(`data/${f}`), gh.files().get(f));
+  assert.ok(repoFiles.some((f) => f.startsWith("transactions/")));
+  for (const n of ["README.md", "backup.json", "browser/settings.json", "browser/ai-runs.json", "browser/unsaved-edits.json", "browser/ai-draft.json"]) assert.ok(zip.has(n), n);
+  assert.ok(JSON.parse(zip.get("browser/ai-runs.json")).length > 0, "the AI log is included");
+  assert.equal(JSON.parse(zip.get("backup.json")).repo, "me/finance-data");
+  const all = [...zip.values()].join("\n");
+  assert.doesNotMatch(all, /sk-ant-secret/, "no API key");
+  assert.doesNotMatch(all, /"ghToken"|"anthropicKey"/, "no secret fields");
+});
+
 test("Settings tab: connection (token never shown back, can be forgotten) and account colors", async () => {
   await go("#settings");
   assert.equal($("#sOwner").value, "me");

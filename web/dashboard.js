@@ -799,6 +799,34 @@ function renderSettings() {
   renderConnection();
   renderAiSettings();
   renderAccounts();
+  renderBackup();
+}
+
+function renderBackup() {
+  const box = $("backupPanel");
+  box.innerHTML = "";
+  const btn = el("button", { id: "exportBackup", class: "primary" }, "Export all data");
+  const msg = el("div", { class: "status" });
+  const show = (text, cls) => { msg.className = `status ${cls}`; msg.textContent = text; };
+  box.append(
+    el("h2", { style: "margin-top:0" }, "Backup"),
+    el("div", { class: "muted" }, "Downloads a .zip with every file in your data repo (accounts, transactions, categories, AI notes...) plus what only this browser keeps: the AI log, any unsaved edits, and the connection settings. Your token and API key are never included. The zip's README explains how to restore it into a new private repo."),
+    el("div", { class: "row", style: "margin-top:10px" }, btn), msg,
+  );
+  btn.onclick = async () => {
+    btn.disabled = true;
+    show("Saving pending edits and reading the data repo…", "muted");
+    try {
+      const r = await call("exportBackup");
+      const url = URL.createObjectURL(new Blob([r.bytes], { type: "application/zip" }));
+      const a = el("a", { href: url, download: r.filename });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      show(`Downloaded ${r.filename}: ${r.files} data files at commit ${r.commit.slice(0, 7)}.` +
+        (r.saveError ? ` ⚠ Some edits couldn't be saved to GitHub (${r.saveError}); they're in browser/unsaved-edits.json.` : ""), r.saveError ? "bad" : "good");
+    } catch (e) { show(e.message, "bad"); }
+    btn.disabled = false;
+  };
 }
 
 async function renderAiSettings() {

@@ -227,6 +227,22 @@ export async function saveNotes({ ai }) {
   return getNotes();
 }
 
+/** Every file in the data repo, read at one commit so the set is consistent. */
+export async function exportDataFiles() {
+  const repo = await getRepo();
+  const head = await repo.headSha();
+  if (!head) throw new Error("The data repo is empty: nothing to export.");
+  const files = [];
+  const walk = async (dir) => {
+    for (const item of await repo.listDir(dir, head)) {
+      if (item.type === "dir") await walk(item.path);
+      else if (item.type === "file") files.push({ path: item.path, content: await repo.readText(item.path, head) });
+    }
+  };
+  await walk("");
+  return { head, files: files.sort((a, b) => a.path.localeCompare(b.path)) };
+}
+
 /** Single immediate edit (patch of note/category/splits). The dashboard uses applyEdits via the outbox instead. */
 export async function updateTransaction({ accountId, id, date, patch }) {
   for (const k of Object.keys(patch)) if (!EDITABLE_FIELDS.includes(k)) throw new Error(`Field "${k}" can't be edited.`);

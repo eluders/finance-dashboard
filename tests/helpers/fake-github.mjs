@@ -36,7 +36,7 @@ export function fakeGitHub({ owner = "me", repo = "finance-data", isPrivate = tr
       const files = filesAt(u.searchParams.get("ref") || "main");
       if (!files) return json(404, { message: "This repository is empty." });
       if (files.has(p)) return accept.includes("raw") ? new Response(files.get(p), { status: 200 }) : json(200, { type: "file", path: p });
-      const prefix = p + "/";
+      const prefix = p ? p + "/" : "";
       const kids = new Map();
       for (const f of files.keys()) if (f.startsWith(prefix)) {
         const rest = f.slice(prefix.length);

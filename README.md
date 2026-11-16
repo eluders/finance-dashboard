@@ -43,6 +43,7 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
   - **Bulk categories**:
     - On Transactions, drag down the Category column (the blank strip left of each dropdown) to select several rows. Shift-click extends the selection and Ctrl-click adds a single row.
     - Ctrl+C copies a category and Ctrl+V pastes it into everything selected, instantly. Delete clears, Ctrl+Z undoes, Esc clears the selection.
+  - **Backup** (Settings → **Export all data**): downloads a .zip of every file in the data repo plus the browser-only state (AI log, unsaved edits, connection settings). It never includes your token or API key. The zip's README explains how to restore it into a new private repo.
 
 ## Privacy and safety
 
