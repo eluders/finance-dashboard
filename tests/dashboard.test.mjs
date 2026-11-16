@@ -58,7 +58,8 @@ await settle();
 const commitsAtStart = gh.log().length;
 
 const go = async (hash) => { window.location.hash = hash; await settle(); };
-const sumRow = (label) => $$("#summaryBody tr").find((r) => r.querySelector("td.label")?.textContent === label);
+const labelText = (td) => [...(td?.childNodes || [])].filter((n) => !n.classList?.contains("note-btn")).map((n) => n.textContent).join("");
+const sumRow = (label) => $$("#summaryBody tr").find((r) => labelText(r.querySelector("td.label")) === label);
 const sumCells = (label) => [...sumRow(label).children].slice(1).map((td) => td.textContent);
 const button = (scope, text) => [...$$(`${scope} button`)].find((b) => b.textContent === text);
 
@@ -806,4 +807,37 @@ test("archived categories: from a chosen month; earlier years keep them; archive
   button("#summaryBody", "Save categories").click();
   await settle();
   assert.ok(outboxNow().categories.doc.groups.flatMap((g) => g.categories).every((c) => !c.archivedFrom));
+});
+
+test("category notes: the note icon at the left of a category row opens a note; saved with the categories", async () => {
+  await go("#summary");
+  const btn = () => sumRow("Groceries").querySelector("td.label .note-btn");
+  assert.ok(btn(), "every category row has a note icon");
+  assert.equal(btn(), sumRow("Groceries").querySelector("td.label").firstChild, "at the very left");
+  assert.equal(sumRow("Food").querySelector(".note-btn"), null, "group header rows don't");
+  assert.equal(btn().classList.contains("has-note"), false);
+
+  btn().click();
+  const ta = window.document.querySelector(".note-pop textarea");
+  assert.ok(ta, "a small note box opens");
+  ta.value = "  Costco runs count here too  ";
+  [...window.document.querySelectorAll(".note-pop button")].find((b) => b.textContent === "Save").click();
+  assert.equal(window.document.querySelector(".note-pop"), null);
+  assert.ok(btn().classList.contains("has-note"));
+  assert.equal(btn().title, "Costco runs count here too", "hover shows the note");
+  await settle();
+  const saved = outboxNow().categories.doc.groups.flatMap((g) => g.categories).find((c) => c.id === "groceries");
+  assert.equal(saved.note, "Costco runs count here too");
+
+  // Esc cancels; clearing the text removes the note
+  btn().click();
+  window.document.querySelector(".note-pop textarea").value = "changed";
+  window.document.querySelector(".note-pop textarea").dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.equal(btn().title, "Costco runs count here too");
+  btn().click();
+  window.document.querySelector(".note-pop textarea").value = "";
+  window.document.body.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true })); // click elsewhere saves
+  assert.equal(btn().classList.contains("has-note"), false);
+  await settle();
+  assert.equal(outboxNow().categories.doc.groups.flatMap((g) => g.categories).find((c) => c.id === "groceries").note, undefined);
 });

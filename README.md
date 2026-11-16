@@ -34,6 +34,7 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
   - **Predictions** (Summary): under each category's actual row is a prediction row with a box for every month, so actual and predicted sit side by side. Type in **Monthly** (the last column) to fill and lock all 12 months, or leave it blank and enter single months (one-offs); the average is their total over 12. **Predicted / mo** shows the result, and the **Predictions** button hides the extra rows. Predicted numbers are orange.
   - **Financial year**: Nov–Oct by default, named by the year it ends in (2027 = Nov 2026 – Oct 2027). Change the start month in Settings.
   - **Group colors**: pick a color for each group in Edit categories; the Summary tints that group's rows.
+  - **Category notes**: click the small note icon at the left of a category row on the Summary to write a note about it. The icon turns blue when there's a note, and hovering shows it.
   - **Archive a category**: Edit categories → "Archive…", then pick the first month it's retired. Earlier years still list it; from that month on its cells are grayed out, and anything still filed under it shows red so you can reassign it. Dropdowns stop offering it for later dates. "Unarchive" brings it back.
   - **Archive**: a built-in category for things that shouldn't count, like card payments and transfers. Archived transactions are hidden from the summary and the list unless you filter to Archive.
   - **AI categorize** (button on the Transactions tab):

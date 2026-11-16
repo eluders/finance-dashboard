@@ -1,5 +1,5 @@
 // Category taxonomy: ordered groups, each with ordered categories.
-//   categories.json v2: { version: 2, groups: [{ id, name, color?, sectionBreak?, categories: [{ id, name, archivedFrom? }] }] }
+//   categories.json v2: { version: 2, groups: [{ id, name, color?, sectionBreak?, categories: [{ id, name, archivedFrom?, note? }] }] }
 // archivedFrom ("YYYY-MM") retires a category from that month on: earlier months still show it, later
 // months show it grayed out, and transactions still in it from then on are flagged for reassigning.
 // Category ids are stable (renames don't touch transactions). v1 (flat list with `group`) is migrated on read.
@@ -60,6 +60,7 @@ export function validateCategories(doc) {
       if (!c.name?.trim()) throw new Error(`A category in "${g.name}" has no name.`);
       if (ids.has(c.id)) throw new Error(`Duplicate category id ${c.id}.`);
       if (c.archivedFrom != null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(c.archivedFrom)) throw new Error(`"${c.name}" has a bad archive month "${c.archivedFrom}".`);
+      if (c.note != null && (typeof c.note !== "string" || c.note.length > 2000)) throw new Error(`The note on "${c.name}" is too long (2000 characters max).`);
       if (c.id === ARCHIVE_ID) throw new Error(`"${c.name}" uses the id reserved for the built-in Archive.`);
       ids.add(c.id);
     }

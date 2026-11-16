@@ -424,7 +424,7 @@ function renderTable(body) {
     if (next) { next.focus(); next.select(); } else e.target.blur();
   };
 
-  const labelCell = (label, category, archived) => el("td", { class: "label" }, category
+  const labelCell = (label, category, archived, noteCat) => el("td", { class: "label" }, noteCat ? noteButton(noteCat) : null, category
     ? Object.assign(el("a", { href: "#transactions" }, label), { onclick: (e) => { e.preventDefault(); goto(category, null)(); } })
     : label, archived ? el("span", { class: "archived-tag", title: `Archived from ${monthText(archived)}` }, "archived") : null);
   /** Adds the predicted sum under the actual amount in a group header cell. */
@@ -439,7 +439,7 @@ function renderTable(body) {
    * offAt(m): month m is archived (grayed). strayAt(m): money sits in an archived category that month (red).
    * aggCs: a group header, which also shows the predicted sums of these categories.
    */
-  const line = (label, arr, { cls = "", category = null, predCs = null, offAt = () => false, strayAt = () => false, archived = null, aggCs = null } = {}) => {
+  const line = (label, arr, { cls = "", category = null, predCs = null, offAt = () => false, strayAt = () => false, archived = null, aggCs = null, noteCat = null } = {}) => {
     const total = arr.reduce((a, b) => a + b, 0);
     const predTd = el("td", { class: "num pred pred-col" });
     if (predCs) avgCells.push({ cs: predCs, td: predTd });
@@ -452,7 +452,7 @@ function renderTable(body) {
     });
     const totalTd = moneyCell(total, { class: "total" });
     const agg = aggCs && showPred ? { cs: aggCs, months: monthTds.map(withPred), total: withPred(totalTd) } : null;
-    const tr = el("tr", { class: cls }, labelCell(label, category, archived), monthTds, totalTd,
+    const tr = el("tr", { class: cls }, labelCell(label, category, archived, noteCat), monthTds, totalTd,
       moneyCell(avgDiv ? Math.round(total / avgDiv) : 0, { class: "avg" }),
       predTd, showPred ? el("td", { class: "monthly-col" }) : null);
     if (agg) aggRows.push({ ...agg, tr });
@@ -504,7 +504,7 @@ function renderTable(body) {
     const anyStray = (m) => cs.some((c) => off(c, m) && catArr(c.id)[m]);
     const rows = [paint(line(g.name, sumArr(cs.map((c) => catArr(c.id))), { cls: "group-row", category: `g:${g.id}`, predCs: cs, aggCs: cs, offAt: allOff, strayAt: anyStray }), g, "group", `g:${g.id}`)];
     for (const c of cs) {
-      rows.push(paint(line(c.name, catArr(c.id), { cls: `cat-line${c.archivedFrom ? " archived-cat" : ""}`, category: c.id, predCs: [c], offAt: (m) => off(c, m), strayAt: (m) => off(c, m), archived: c.archivedFrom || null }), g, "cat", c.id));
+      rows.push(paint(line(c.name, catArr(c.id), { cls: `cat-line${c.archivedFrom ? " archived-cat" : ""}`, category: c.id, predCs: [c], offAt: (m) => off(c, m), strayAt: (m) => off(c, m), archived: c.archivedFrom || null, noteCat: c }), g, "cat", c.id));
       if (showPred) rows.push(paint(predCatLine(c), g, "cat"));
     }
     blocks.push(block(rows, g.sectionBreak && gi > 0 ? " section-start" : ""));
@@ -515,6 +515,68 @@ function renderTable(body) {
   pinSummaryHead();
   refresh();
 }
+// a sheet of paper with a pencil
+const NOTE_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8"/><path d="M5 7h2.5M5 9.5h4.5M5 12h4.5"/><path d="M13 1.8l1.2 1.2-5 5-1.7.5.5-1.7z"/></svg>';
+// ---------- category notes: the note icon at the left of each category row on the Summary ----------
+// Stored as `note` on the category in categories.json (saved through the outbox like other category edits).
+function noteButton(c) {
+  const b = el("button", { class: `note-btn${c.note ? " has-note" : ""}`, type: "button", "aria-label": `Note for ${c.name}` });
+  b.innerHTML = NOTE_ICON;
+  b.title = c.note ? c.note : "Add a note";
+  b.onclick = (e) => { e.stopPropagation(); openNoteEditor(c.id, b); };
+  return b;
+}
+let notePop = null;
+function closeNoteEditor(save) {
+  if (!notePop) return;
+  const { pop, id, ta } = notePop;
+  notePop = null;
+  pop.remove();
+  if (save) setCategoryNote(id, ta.value);
+}
+function openNoteEditor(id, anchor) {
+  const again = notePop?.id === id;
+  closeNoteEditor(true);
+  if (again) return; // clicking the icon again closes it
+  const c = catIdx.get(id);
+  if (!c) return;
+  const ta = el("textarea", { rows: 4, placeholder: `Note for ${c.name}…`, maxlength: 2000 });
+  ta.value = c.note || "";
+  ta.onkeydown = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); closeNoteEditor(false); }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); closeNoteEditor(true); }
+  };
+  const save = Object.assign(el("button", { class: "primary", type: "button" }, "Save"), { onclick: () => closeNoteEditor(true) });
+  const cancel = Object.assign(el("button", { type: "button" }, "Cancel"), { onclick: () => closeNoteEditor(false) });
+  const pop = el("div", { class: "note-pop" }, el("div", { class: "note-pop-title" }, c.name), ta,
+    el("div", { class: "row" }, save, cancel, el("span", { class: "muted small" }, "Ctrl+Enter saves · Esc cancels")));
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${r.left + window.scrollX}px`;
+  pop.style.top = `${r.bottom + window.scrollY + 4}px`;
+  document.body.append(pop);
+  notePop = { pop, id, ta, anchor };
+  ta.focus();
+}
+// clicking elsewhere saves and closes, like a spreadsheet cell comment
+document.addEventListener("mousedown", (e) => { if (notePop && !notePop.pop.contains(e.target) && e.target !== notePop.anchor) closeNoteEditor(true); });
+function setCategoryNote(id, text) {
+  const doc = structuredClone(cats);
+  const c = doc.groups.flatMap((g) => g.categories).find((x) => x.id === id);
+  if (!c) return;
+  const note = text.trim();
+  if ((c.note || "") === note) return;
+  if (note) c.note = note; else delete c.note;
+  try { validateCategories(doc); } catch (e) { setStatus(e.message, "bad"); return; }
+  setCategories(doc);
+  queueOp({ type: "categories", doc });
+  for (const tr of document.querySelectorAll("#summaryBody tr[data-key]")) {
+    const b = tr.dataset.key === id && tr.querySelector(".note-btn");
+    if (!b) continue;
+    b.classList.toggle("has-note", !!note);
+    b.title = note || "Add a note";
+  }
+}
+
 /** The column header sticks just under the (sticky) top bar. */
 function pinSummaryHead() {
   document.documentElement.style.setProperty("--topbar-h", `${document.querySelector(".topbar")?.offsetHeight || 0}px`);
