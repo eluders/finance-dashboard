@@ -60,25 +60,22 @@ function setView(patch) {
   if (anchor) restoreSummaryAnchor(anchor);
 }
 
-// Showing/hiding predictions keeps your place: the row at the top of the table stays at the top
-// (prediction rows come and go above it, so a raw scroll offset would drift).
-const summaryCard = () => document.querySelector("#summaryBody .summary-card");
+// Showing/hiding predictions keeps your place: the row just under the pinned column header stays
+// there (prediction rows come and go above it, so a raw scroll offset would drift).
+const summaryHead = () => document.querySelector("#summaryBody .sum-head");
+const summaryRows = () => [...document.querySelectorAll("#summaryBody tr[data-key]")];
 function summaryAnchor() {
-  const card = summaryCard();
-  if (!card) return null;
-  const top = card.getBoundingClientRect().top + (card.querySelector("thead")?.offsetHeight || 0);
-  const row = [...card.querySelectorAll("tbody tr[data-key]")].find((tr) => tr.getBoundingClientRect().bottom > top + 1);
-  return { key: row?.dataset.key, off: row ? row.getBoundingClientRect().top - top : 0, scrollTop: card.scrollTop, pageY: window.scrollY };
+  const head = summaryHead();
+  if (!head) return null;
+  const top = head.getBoundingClientRect().bottom;
+  const row = summaryRows().find((tr) => tr.getBoundingClientRect().bottom > top + 1);
+  return { key: row?.dataset.key, off: row ? row.getBoundingClientRect().top - top : 0 };
 }
 function restoreSummaryAnchor(a) {
-  const card = summaryCard();
-  if (!card) return;
-  window.scrollTo(window.scrollX, a.pageY);
-  card.scrollTop = a.scrollTop;
-  const row = a.key && [...card.querySelectorAll("tbody tr[data-key]")].find((tr) => tr.dataset.key === a.key);
-  if (!row) return;
-  const top = card.getBoundingClientRect().top + (card.querySelector("thead")?.offsetHeight || 0);
-  card.scrollTop += row.getBoundingClientRect().top - top - a.off;
+  const head = summaryHead();
+  const row = a.key && summaryRows().find((tr) => tr.dataset.key === a.key);
+  if (!head || !row) return;
+  window.scrollBy(0, row.getBoundingClientRect().top - head.getBoundingClientRect().bottom - a.off);
 }
 $("sumPred").onclick = () => setView({ predict: !view.predict });
 
@@ -262,25 +259,16 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 // ---------- summary tab ----------
-// Actual (from transactions, all 12 months of the financial year, plus a predicted avg/mo column)
-// or Predict (a grid of predicted amounts per month; see lib/budget.js).
-/** Groups split into sections at each `sectionBreak` group (e.g. spending | investments | not counted). */
-function sections(groups) {
-  const out = [];
-  for (const g of groups) { if (!out.length || g.sectionBreak) out.push([]); out.at(-1).push(g); }
-  return out;
-}
 /** Mixes a group's color with white (a = share of the color) so sticky cells stay opaque. */
 function tint(hex, a) {
   const n = parseInt(hex.slice(1), 16), mix = (c) => Math.round(c * a + 255 * (1 - a));
   return `rgb(${mix(n >> 16)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
 }
-/** Colors a summary row by its group: a stripe on the label, the group row tinted, its categories lightly,
- *  a section's subtotal in between. */
+/** Colors a summary row by its group: a stripe on the label, the group row tinted, its categories lightly. */
 function paint(tr, g, kind, key) {
   if (key) tr.dataset.key = key;
   if (!g?.color) return tr;
-  tr.style.setProperty("background", tint(g.color, kind === "group" ? 0.2 : kind === "sub" ? 0.13 : 0.07), "important"); // beats tr.group-row's default
+  tr.style.setProperty("background", tint(g.color, kind === "group" ? 0.2 : 0.07), "important"); // beats tr.group-row's default
   tr.querySelector("td.label").style.boxShadow = `inset 4px 0 0 ${g.color}`;
   return tr;
 }
@@ -349,10 +337,11 @@ function renderSummary() {
   renderTable(body);
 }
 
-// One table: each category's actual row, and (with Predictions on) a prediction row right under it
-// with an entry box per month, lined up with the actual months. The Monthly box sits in the last
+// A standalone table per group (same columns, so they line up), with one column header pinned under
+// the top bar; the page itself scrolls. A group's header row is its subtotal: each cell has the actual
+// sum and, with Predictions on, the predicted sum under it. With Predictions on, each category's actual
+// row is followed by a prediction row with an entry box per month; the Monthly box sits in the last
 // column so the month columns don't move: it fills and locks all 12 months (lib/budget.js).
-// Each section's predicted subtotal row is always shown, like the Predicted / mo column.
 // Archived categories (archivedFrom) show only in years they were still in use (or still have money
 // in them); their archived months are grayed out, and money still in them then is red (reassign it).
 const centsText = (c) => (c == null ? "" : c % 100 ? (c / 100).toFixed(2) : String(c / 100));
@@ -383,8 +372,8 @@ function renderTable(body) {
 
   // live cells, recomputed after every prediction edit
   const catRows = [];  // { c, monthly, months: [input×12], total }
-  const aggRows = [];  // { cs, months: [td×12], total }
-  const avgCells = []; // { cs, td }: the "Predicted / mo" column on actual rows
+  const aggRows = [];  // { cs, months: [el×12], total }: predicted sums in a group's header row
+  const avgCells = []; // { cs, td }: the "Predicted / mo" column
   const refresh = () => {
     for (const r of catRows) {
       const e = entry(r.c.id);
@@ -401,8 +390,9 @@ function renderTable(body) {
     }
     for (const r of aggRows) {
       const per = r.cs.map(predMonths);
-      r.months.forEach((td, m) => setTd(td, per.reduce((a, v) => a + (v[m] || 0), 0)));
+      r.months.forEach((x, m) => setTd(x, per.reduce((a, v) => a + (v[m] || 0), 0)));
       setTd(r.total, per.reduce((a, v) => a + v.reduce((x, y) => x + (y || 0), 0), 0));
+      r.tr.classList.toggle("no-pred", !r.total.textContent); // nothing predicted: one line
     }
     for (const { cs, td } of avgCells) {
       const v = predAvg(cs);
@@ -425,7 +415,7 @@ function renderTable(body) {
     setStatus("");
     return { ok: true, cents };
   };
-  // Enter moves to the next prediction row in the same column, like a spreadsheet
+  // Enter moves to the next prediction row in the same column (across groups), like a spreadsheet
   const onKey = (e) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
@@ -437,27 +427,37 @@ function renderTable(body) {
   const labelCell = (label, category, archived) => el("td", { class: "label" }, category
     ? Object.assign(el("a", { href: "#transactions" }, label), { onclick: (e) => { e.preventDefault(); goto(category, null)(); } })
     : label, archived ? el("span", { class: "archived-tag", title: `Archived from ${monthText(archived)}` }, "archived") : null);
+  /** Adds the predicted sum under the actual amount in a group header cell. */
+  const withPred = (td) => {
+    if (!td.textContent) td.prepend(el("span", { class: "agg-blank" })); // holds the actual line, so predicted sums all sit on line 2
+    const p = el("div", { class: "pred agg-pred" });
+    td.append(p);
+    return p;
+  };
   /**
-   * An actual row: 12 months, Total, Avg / mo, Predicted / mo, and an empty Monthly cell.
+   * An actual row: 12 months, Total, Avg / mo, Predicted / mo (and an empty Monthly cell).
    * offAt(m): month m is archived (grayed). strayAt(m): money sits in an archived category that month (red).
+   * aggCs: a group header, which also shows the predicted sums of these categories.
    */
-  const line = (label, arr, { cls = "", category = null, predCs = null, offAt = () => false, strayAt = () => false, archived = null } = {}) => {
+  const line = (label, arr, { cls = "", category = null, predCs = null, offAt = () => false, strayAt = () => false, archived = null, aggCs = null } = {}) => {
     const total = arr.reduce((a, b) => a + b, 0);
     const predTd = el("td", { class: "num pred pred-col" });
     if (predCs) avgCells.push({ cs: predCs, td: predTd });
-    return el("tr", { class: cls }, labelCell(label, category, archived),
-      cols.map((m) => {
-        const stray = !!arr[m] && strayAt(m);
-        const td = moneyCell(arr[m], { ...(category ? { onclick: goto(category, m) } : {}), ...(stray ? { title: `${fmtMoney(Math.abs(arr[m]))} in an archived category: reassign it` } : {}) });
-        if (offAt(m)) td.classList.add("off");
-        if (stray) td.classList.add("stray");
-        return td;
-      }),
-      moneyCell(total, { class: "total" }),
+    const monthTds = cols.map((m) => {
+      const stray = !!arr[m] && strayAt(m);
+      const td = moneyCell(arr[m], { ...(category ? { onclick: goto(category, m) } : {}), ...(stray ? { title: `${fmtMoney(Math.abs(arr[m]))} in an archived category: reassign it` } : {}) });
+      if (offAt(m)) td.classList.add("off");
+      if (stray) td.classList.add("stray");
+      return td;
+    });
+    const totalTd = moneyCell(total, { class: "total" });
+    const agg = aggCs && showPred ? { cs: aggCs, months: monthTds.map(withPred), total: withPred(totalTd) } : null;
+    const tr = el("tr", { class: cls }, labelCell(label, category, archived), monthTds, totalTd,
       moneyCell(avgDiv ? Math.round(total / avgDiv) : 0, { class: "avg" }),
-      predTd, el("td", { class: "monthly-col" }));
+      predTd, showPred ? el("td", { class: "monthly-col" }) : null);
+    if (agg) aggRows.push({ ...agg, tr });
+    return tr;
   };
-  const predLabel = () => el("td", { class: "label pred-label" }, "predicted");
   /** A category's prediction row: an entry box per month, the predicted total, and Monthly at the far right. */
   const predCatLine = (c) => {
     const monthly = el("input", { class: "pred-input monthly", inputmode: "decimal", placeholder: "—", "data-col": "monthly", "aria-label": `${c.name} monthly prediction`, title: "Fills and locks all 12 months" });
@@ -477,56 +477,49 @@ function renderTable(body) {
     for (const i of [...inputs, monthly]) i.addEventListener("keydown", onKey);
     const row = { c, monthly, months: inputs, total: el("td", { class: "num pred total" }) };
     catRows.push(row);
-    return el("tr", { class: "pred-row" }, predLabel(), inputs.map((i, m) => el("td", { class: `pcell${off(c, m) ? " off" : ""}` }, i)),
+    return el("tr", { class: "pred-row" }, el("td", { class: "label pred-label" }, "predicted"),
+      inputs.map((i, m) => el("td", { class: `pcell${off(c, m) ? " off" : ""}` }, i)),
       row.total, el("td"), el("td", { class: "pred-col" }), el("td", { class: "pcell monthly-col" }, monthly));
   };
-  /** Predicted sums for a group or section. */
-  const predAggLine = (cs, cls, offAt = () => false) => {
-    const row = { cs, months: names.map((_, m) => el("td", { class: `num pred${offAt(m) ? " off" : ""}` })), total: el("td", { class: "num pred total" }) };
-    aggRows.push(row);
-    return el("tr", { class: `pred-row ${cls}` }, predLabel(), row.months, row.total, el("td"), el("td", { class: "pred-col" }), el("td", { class: "monthly-col" }));
-  };
 
-  const tbody = el("tbody");
-  const width = 17;
-  sections(cats.groups).forEach((sec, si) => {
-    if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
-    const secCs = [];
-    for (const g of sec) {
-      const cs = g.categories.filter(visible);
-      if (g.categories.length && !cs.length) continue; // every category archived before this year
-      secCs.push(...cs);
-      const ids = cs.map((c) => c.id);
-      const allOff = (m) => cs.length > 0 && cs.every((c) => off(c, m));
-      const anyStray = (m) => cs.some((c) => off(c, m) && catArr(c.id)[m]);
-      tbody.append(paint(line(g.name, sumArr(ids.map(catArr)), { cls: "group-row", category: `g:${g.id}`, predCs: cs, offAt: allOff, strayAt: anyStray }), g, "group", `g:${g.id}`));
-      if (showPred) tbody.append(paint(predAggLine(cs, "group-pred", allOff), g, "group"));
-      for (const c of cs) {
-        tbody.append(paint(line(c.name, catArr(c.id), { cls: `cat-line${c.archivedFrom ? " archived-cat" : ""}`, category: c.id, predCs: [c], offAt: (m) => off(c, m), strayAt: (m) => off(c, m), archived: c.archivedFrom || null }), g, "cat", c.id));
-        if (showPred) tbody.append(paint(predCatLine(c), g, "cat"));
-      }
-    }
-    // the subtotal takes the section's first group color, a shade between its groups and categories;
-    // its predicted row is always shown
-    const sg = sec.find((g) => g.color);
-    tbody.append(paint(line("Subtotal", sumArr(secCs.map((c) => catArr(c.id))), { cls: "subtotal-row", predCs: secCs }), sg, "sub", `sub:${si}`));
-    tbody.append(paint(predAggLine(secCs, "subtotal-pred"), sg, "sub"));
-  });
-  if (sums.has(UNCAT)) {
-    tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
-    tbody.append(line("Uncategorized", sums.get(UNCAT), { cls: "uncat-row", category: UNCAT }));
-  }
+  // identical fixed column widths in every table, so the groups line up under the one header
+  const colgroup = () => el("colgroup", {}, el("col", { class: "c-label" }), cols.map(() => el("col")),
+    el("col", { class: "c-total" }), el("col", { class: "c-avg" }), el("col", { class: "c-pred" }), showPred ? el("col", { class: "c-monthly" }) : null);
+  const tableCls = `summary${showPred ? " with-pred" : ""}`;
+  const block = (rows, cls = "") => el("div", { class: `card table-card sum-block${cls}` }, el("table", { class: tableCls }, colgroup(), el("tbody", {}, rows)));
 
-  body.append(el("div", { class: "card table-card summary-card" }, el("table", { class: `summary${showPred ? " with-pred" : ""}` },
+  const head = el("div", { class: "card table-card sum-head" }, el("table", { class: tableCls }, colgroup(),
     el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"),
       cols.map((m) => el("th", { class: "num", title: yms[m] }, names[m])),
       el("th", { class: "num total" }, "Total"),
       el("th", { class: "num avg", title: avgDiv ? `Average over the ${avgDiv} month${avgDiv === 1 ? "" : "s"} with data so far` : "No transactions yet" }, "Avg / mo"),
       el("th", { class: "num pred", title: "Predicted average per month: Monthly, or the year's predicted months / 12" }, "Predicted / mo"),
-      el("th", { class: "num pred monthly-col", title: "Type an amount here to fill and lock all 12 predicted months. Leave it blank to enter single months (one-offs)." }, "Monthly"))),
-    tbody)));
+      showPred ? el("th", { class: "num pred monthly-col", title: "Type an amount here to fill and lock all 12 predicted months. Leave it blank to enter single months (one-offs)." }, "Monthly") : null))));
+
+  const blocks = [];
+  cats.groups.forEach((g, gi) => {
+    const cs = g.categories.filter(visible);
+    if (g.categories.length && !cs.length) return; // every category archived before this year
+    const allOff = (m) => cs.length > 0 && cs.every((c) => off(c, m));
+    const anyStray = (m) => cs.some((c) => off(c, m) && catArr(c.id)[m]);
+    const rows = [paint(line(g.name, sumArr(cs.map((c) => catArr(c.id))), { cls: "group-row", category: `g:${g.id}`, predCs: cs, aggCs: cs, offAt: allOff, strayAt: anyStray }), g, "group", `g:${g.id}`)];
+    for (const c of cs) {
+      rows.push(paint(line(c.name, catArr(c.id), { cls: `cat-line${c.archivedFrom ? " archived-cat" : ""}`, category: c.id, predCs: [c], offAt: (m) => off(c, m), strayAt: (m) => off(c, m), archived: c.archivedFrom || null }), g, "cat", c.id));
+      if (showPred) rows.push(paint(predCatLine(c), g, "cat"));
+    }
+    blocks.push(block(rows, g.sectionBreak && gi > 0 ? " section-start" : ""));
+  });
+  if (sums.has(UNCAT)) blocks.push(block([line("Uncategorized", sums.get(UNCAT), { cls: "uncat-row", category: UNCAT })], " section-start"));
+
+  body.append(el("div", { class: "sum-tables" }, head, blocks));
+  pinSummaryHead();
   refresh();
 }
+/** The column header sticks just under the (sticky) top bar. */
+function pinSummaryHead() {
+  document.documentElement.style.setProperty("--topbar-h", `${document.querySelector(".topbar")?.offsetHeight || 0}px`);
+}
+window.addEventListener("resize", pinSummaryHead);
 
 // ---------- transactions tab ----------
 // Category filter: a Set of category ids + UNCAT + ARCHIVE_ID. Default = everything but Archive.
@@ -976,7 +969,7 @@ function drawCategoryEditor() {
     noColor.onclick = () => { delete g.color; drawCategoryEditor(); };
     const addCat = el("button", {}, "+ Category");
     addCat.onclick = () => { g.categories.push({ id: uniqueId("new_category", allIds()), name: "New category" }); drawCategoryEditor(); };
-    const brk = el("button", { class: `icon break-toggle${g.sectionBreak ? " on" : ""}`, title: "Start a new section (with its own total) at this group", disabled: gi === 0 }, "Section break");
+    const brk = el("button", { class: `icon break-toggle${g.sectionBreak ? " on" : ""}`, title: "Leave a bigger gap before this group on the Summary", disabled: gi === 0 }, "Section break");
     brk.onclick = () => { if (g.sectionBreak) delete g.sectionBreak; else g.sectionBreak = true; drawCategoryEditor(); };
     const delGroup = el("button", { class: "icon", title: g.categories.length ? "Move or delete its categories first" : "Delete group", disabled: g.categories.length > 0 }, "✕");
     delGroup.onclick = () => { draft.groups.splice(draft.groups.indexOf(g), 1); drawCategoryEditor(); };
@@ -1041,7 +1034,7 @@ function drawCategoryEditor() {
 
   box.append(el("div", { class: "card" },
     el("div", { class: "row", style: "justify-content:space-between" }, el("h2", { style: "margin:0" }, "Edit categories"), el("span", { id: "catDirty", class: "warn" }, dirty() ? "Unsaved changes" : "")),
-    el("div", { class: "muted", style: "margin:4px 0 8px" }, "Drag ☰ to reorder groups and categories, or to move a category into another group. This order is used in the summary and the dropdowns. Renaming keeps existing transactions linked. \"Section break\" starts a new block with its own total. \"Archive…\" retires a category from a month you pick: earlier years still show it, later months are grayed out, and anything still in it then shows red."),
+    el("div", { class: "muted", style: "margin:4px 0 8px" }, "Drag ☰ to reorder groups and categories, or to move a category into another group. This order is used in the summary and the dropdowns. Renaming keeps existing transactions linked. \"Section break\" leaves a bigger gap before this group on the Summary. \"Archive…\" retires a category from a month you pick: earlier years still show it, later months are grayed out, and anything still in it then shows red."),
     el("div", { class: "row", style: "margin-bottom:10px" }, actions()),
     groupsEl,
     el("div", { class: "row", style: "margin-top:10px" }, addGroup),

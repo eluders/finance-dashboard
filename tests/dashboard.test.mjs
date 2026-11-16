@@ -144,7 +144,10 @@ test("summary: per-category monthly sums (split parts counted separately), group
   assert.deepEqual(sumCells("Health & Medical"), ["$13", ...Array(11).fill(""), "$13", "$13", "", ""]); // the $12.50 split part
   assert.equal(sumRow("Food").classList.contains("group-row"), true);
   assert.deepEqual(sumCells("Food"), ["$60", ...Array(11).fill(""), "$60", "$60", "", ""]);
-  assert.deepEqual(sumCells("Subtotal"), ["$85", ...Array(11).fill(""), "$85", "$85", "", ""]); // 12.99 + 12.50 + 60 = 85.49
+  assert.equal(sumRow("Subtotal"), undefined, "the group header row is the subtotal");
+  assert.equal(sumRow("Food").closest(".sum-block").querySelector("tr"), sumRow("Food"), "each group is its own table, header row first");
+  assert.ok($$("#summaryBody .sum-block").length > 3);
+  assert.equal($$("#summaryBody .sum-head thead th").length, 17, "one column header for all the tables");
   assert.deepEqual(sumCells("Uncategorized"), ["$8", ...Array(11).fill(""), "$8", "$8", "", ""]); // the $7.50 remainder has no category
   assert.equal(sumCells("Travel").join(""), "", "unused categories are listed, blank");
 });
@@ -217,13 +220,14 @@ test("Edit categories (on Summary): drag handles reorder groups and move categor
   const subsRow = $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === "Subscriptions");
   assert.equal(subsRow.querySelector("button[title^='Used by']").disabled, true, "in-use category can't be deleted");
 
-  // a section break before the 4th group splits the summary into two blocks with their own subtotals
+  // a section break before the 4th group leaves a bigger gap there
+  const g4 = groups()[3].querySelector(".cat-group-name").value;
   [...groups()[3].querySelectorAll("button")].find((b) => b.textContent === "Section break").click();
   assert.ok(groups()[3].classList.contains("section-start"));
 
   button("#summaryBody", "Save categories").click();
   assert.equal($("#editCategories").hidden, false, "back to the summary");
-  assert.equal($$("#summaryBody tr.subtotal-row").length, 2);
+  assert.ok(sumRow(g4).closest(".sum-block").classList.contains("section-start"));
   assert.equal(sumRow("Pharmacy") != null, true);
   await settle();
   assert.equal(pending(), 2);
@@ -569,7 +573,8 @@ test("predictions inline: a row under each category, Monthly at the far right; l
   assert.equal(tds(predRow("Groceries"))[13], "$1,441");
   assert.equal(sumRow("Groceries").children[15].textContent, "$120");
   assert.equal(g[0].readOnly, false);
-  assert.equal(predRow(groupName).children[6].textContent, "$1,200", "group prediction row sums its categories per month");
+  assert.equal(sumRow(groupName).children[6].querySelector(".agg-pred").textContent, "$1,200", "the group header shows its predicted sum under the actual, per month");
+  assert.ok(!predRow(groupName).classList.contains("pred-row"), "no separate group prediction row");
   assert.equal(sumRow(groupName).children[15].textContent, "$120");
   assert.ok(sumRow("Groceries").children[15].classList.contains("pred") && predRow("Groceries").querySelector(".pred-input"), "predicted values are orange");
   g[7].value = "abc"; fire(g[7], "change");
@@ -584,9 +589,8 @@ test("predictions inline: a row under each category, Monthly at the far right; l
 
   // hide the prediction rows; Predicted / mo stays
   $("#sumPred").click();
-  assert.equal($$("#summaryBody tr.pred-row:not(.subtotal-pred)").length, 0);
-  assert.ok($$("#summaryBody tr.subtotal-pred").length > 0, "the predicted subtotal row always shows");
-  assert.ok(sumRow("Subtotal").nextElementSibling.classList.contains("subtotal-pred"));
+  assert.equal($$("#summaryBody tr.pred-row").length, 0);
+  assert.equal($$("#summaryBody .agg-pred").length, 0, "group headers show just the actual");
   assert.equal(sumRow("Groceries").children[15].textContent, "$120");
   $("#sumPred").click();
   assert.ok($$("#summaryBody tr.pred-row").length > 0);
