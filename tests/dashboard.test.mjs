@@ -139,17 +139,17 @@ test("split with a Remaining row: only one remainder, live math, applied locally
 
 test("summary: per-category monthly sums (split parts counted separately), group + subtotal rows", async () => {
   await go("#summary");
-  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Total", "Avg / mo", "Predicted / mo", "Monthly"], "all 12 months of the financial year, even ones still ahead");
-  assert.deepEqual(sumCells("Subscriptions"), ["$13", ...Array(11).fill(""), "$13", "$13", "", ""]);
-  assert.deepEqual(sumCells("Groceries"), ["$60", ...Array(11).fill(""), "$60", "$60", "", ""]);
-  assert.deepEqual(sumCells("Health & Medical"), ["$13", ...Array(11).fill(""), "$13", "$13", "", ""]); // the $12.50 split part
+  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Total", "Avg / mo", "Monthly"], "all 12 months of the financial year, even ones still ahead");
+  assert.deepEqual(sumCells("Subscriptions"), ["$13", ...Array(11).fill(""), "$13", "$13", ""]);
+  assert.deepEqual(sumCells("Groceries"), ["$60", ...Array(11).fill(""), "$60", "$60", ""]);
+  assert.deepEqual(sumCells("Health & Medical"), ["$13", ...Array(11).fill(""), "$13", "$13", ""]); // the $12.50 split part
   assert.equal(sumRow("Food").classList.contains("group-row"), true);
-  assert.deepEqual(sumCells("Food"), ["$60", ...Array(11).fill(""), "$60", "$60", "", ""]);
+  assert.deepEqual(sumCells("Food"), ["$60", ...Array(11).fill(""), "$60", "$60", ""]);
   assert.equal(sumRow("Subtotal"), undefined, "the group header row is the subtotal");
   assert.equal(sumRow("Food").closest(".sum-block").querySelector("tr"), sumRow("Food"), "each group is its own table, header row first");
   assert.ok($$("#summaryBody .sum-block").length > 3);
-  assert.equal($$("#summaryBody .sum-head thead th").length, 17, "one column header for all the tables");
-  assert.deepEqual(sumCells("Uncategorized"), ["$8", ...Array(11).fill(""), "$8", "$8", "", ""]); // the $7.50 remainder has no category
+  assert.equal($$("#summaryBody .sum-head thead th").length, 16, "one column header for all the tables");
+  assert.deepEqual(sumCells("Uncategorized"), ["$8", ...Array(11).fill(""), "$8", "$8", ""]); // the $7.50 remainder has no category
   assert.equal(sumCells("Travel").join(""), "", "unused categories are listed, blank");
 });
 
@@ -547,7 +547,7 @@ test("predictions inline: a row under each category, Monthly at the far right; l
   // every category has a prediction row right under it; the Monthly box is the last column
   assert.equal($("#sumPred").classList.contains("on"), true, "predictions shown by default");
   const heads = $$("#summaryBody thead th").map((th) => th.textContent);
-  assert.deepEqual(heads.slice(-4), ["Total", "Avg / mo", "Predicted / mo", "Monthly"]);
+  assert.deepEqual(heads.slice(-3), ["Total", "Avg / mo", "Monthly"], "no separate Predicted / mo column");
   const predRow = (label) => sumRow(label).nextElementSibling;
   assert.ok(predRow("Travel").classList.contains("pred-row"));
   const inputsOf = (label) => [...predRow(label).querySelectorAll("input")];
@@ -563,7 +563,7 @@ test("predictions inline: a row under each category, Monthly at the far right; l
   assert.ok(months.every((i) => i.value === "100" && i.readOnly), "filled and locked");
   const tds = (tr) => [...tr.children].map((td) => td.textContent);
   assert.equal(tds(predRow("Travel"))[13], "$1,200", "predicted total under Total");
-  assert.equal(sumRow("Travel").children[15].textContent, "$100", "Predicted / mo on the actual row");
+  assert.equal(predRow("Travel").children[14].textContent, "$100", "predicted average per month under Avg / mo, in the prediction row");
   months[5].value = "5"; fire(months[5], "change");
   assert.equal(months[5].value, "100", "locked months can't be changed");
 
@@ -572,12 +572,12 @@ test("predictions inline: a row under each category, Monthly at the far right; l
   g[5].value = "1,200"; fire(g[5], "change");
   g[6].value = "240.50"; fire(g[6], "change");
   assert.equal(tds(predRow("Groceries"))[13], "$1,441");
-  assert.equal(sumRow("Groceries").children[15].textContent, "$120");
+  assert.equal(predRow("Groceries").children[14].textContent, "$120");
   assert.equal(g[0].readOnly, false);
   assert.equal(sumRow(groupName).children[6].querySelector(".agg-pred").textContent, "$1,200", "the group header shows its predicted sum under the actual, per month");
   assert.ok(!predRow(groupName).classList.contains("pred-row"), "no separate group prediction row");
-  assert.equal(sumRow(groupName).children[15].textContent, "$120");
-  assert.ok(sumRow("Groceries").children[15].classList.contains("pred") && predRow("Groceries").querySelector(".pred-input"), "predicted values are orange");
+  assert.equal(sumRow(groupName).children[14].querySelector(".agg-pred").textContent, "$120", "group: predicted average under its Avg / mo");
+  assert.ok(predRow("Groceries").children[14].classList.contains("pred") && predRow("Groceries").querySelector(".pred-input"), "predicted values are orange");
   g[7].value = "abc"; fire(g[7], "change");
   assert.equal(g[7].value, "", "bad input is put back");
   assert.match($("#status").textContent, /isn't an amount/);
@@ -586,14 +586,12 @@ test("predictions inline: a row under each category, Monthly at the far right; l
   monthly.value = ""; fire(monthly, "change");
   assert.ok(months.every((i) => i.value === "100" && !i.readOnly));
   months[0].value = "400"; fire(months[0], "change");
-  assert.equal(sumRow("Travel").children[15].textContent, "$125");
+  assert.equal(predRow("Travel").children[14].textContent, "$125");
 
-  // hide the prediction rows; Predicted / mo stays
+  // stop editing: without Show predicted, no predicted values at all
   $("#sumPred").click();
   assert.equal($$("#summaryBody tr.pred-row").length, 0);
-  assert.equal(sumRow(groupName).children[6].querySelector(".agg-pred")?.textContent, "$1,200", "group headers still show the predicted sum under the actual");
-  assert.ok(!sumRow(groupName).classList.contains("no-pred"));
-  assert.equal(sumRow("Groceries").children[15].textContent, "$120");
+  assert.equal($$("#summaryBody .agg-pred").length, 0, "nothing predicted shows in the regular view");
   $("#sumPred").click();
   assert.ok($$("#summaryBody tr.pred-row").length > 0);
 
@@ -610,10 +608,10 @@ test("predictions inline: a row under each category, Monthly at the far right; l
   // reload: budget comes back from GitHub
   $("#reload").click();
   await settle();
-  assert.equal(sumRow("Groceries").children[15].textContent, "$120");
+  assert.equal(predRow("Groceries").children[14].textContent, "$120");
   const gm = inputsOf("Groceries")[12];
   gm.value = "50"; fire(gm, "change"); // left unsaved for the export test
-  assert.equal(sumRow("Groceries").children[15].textContent, "$50");
+  assert.equal(predRow("Groceries").children[14].textContent, "$50");
 });
 
 test("financial year: Nov–Oct by default, named by the year it ends in; adjustable in Settings; group colors", async () => {
@@ -860,27 +858,30 @@ test("category notes: the note icon at the left of a category row opens a note; 
   assert.equal(outboxNow().categories.doc.groups.flatMap((g) => g.categories).find((c) => c.id === "groceries").note, undefined);
 });
 
-test("Show predicted: view-only predicted amounts under every category's actual; Predictions stays the edit mode", async () => {
+test("Show predicted: view-only predicted amounts under the actual ones; remembered across the Predictions edit mode", async () => {
   await go("#summary");
   if ($("#sumPred").classList.contains("on")) $("#sumPred").click();
+  if ($("#sumInline").classList.contains("on")) $("#sumInline").click();
   const groceries = () => sumRow("Groceries");
-  assert.equal(groceries().querySelector(".agg-pred"), null, "regular view: categories show just the actual");
+  const food = () => sumRow("Food");
+  assert.equal($$("#summaryBody .agg-pred").length, 0, "regular view: no predicted values anywhere");
 
   $("#sumInline").click();
-  assert.ok($("#sumInline").classList.contains("on") && !$("#sumPred").classList.contains("on"));
   const preds = [...groceries().querySelectorAll(".agg-pred")];
-  assert.equal(preds.length, 13, "a predicted line in every month cell and under Total");
-  assert.ok(groceries().classList.contains("has-agg"));
+  assert.equal(preds.length, 14, "a predicted line in every month cell, under Total and under Avg / mo");
+  assert.equal(groceries().children[14].querySelector(".agg-pred").textContent, "$50", "predicted average per month under Avg / mo");
+  assert.ok(food().querySelector(".agg-pred"), "group headers too");
   assert.equal($$("#summaryBody input.pred-input").length, 0, "view only: no entry boxes");
-  assert.equal($$("#summaryBody tr.pred-row").length, 0);
 
-  // Predictions enters the edit mode (and leaves Show predicted)
+  // edit, then stop editing: back to Show predicted
   $("#sumPred").click();
-  assert.ok($("#sumPred").classList.contains("on") && !$("#sumInline").classList.contains("on"));
   assert.ok($$("#summaryBody input.pred-input").length > 0);
-  assert.equal(groceries().querySelector(".agg-pred"), null, "the entry row shows them instead");
-  assert.equal(JSON.parse(localStorage.getItem("fd:summaryView")).inline, false, "remembered");
+  assert.equal(groceries().querySelector(".agg-pred"), null, "while editing, the entry row shows them");
+  assert.ok(food().querySelector(".agg-pred"), "group sums still shown while editing");
+  $("#sumPred").click();
+  assert.ok($("#sumInline").classList.contains("on"), "Show predicted is still on");
+  assert.equal(groceries().querySelectorAll(".agg-pred").length, 14);
+  assert.equal(JSON.parse(localStorage.getItem("fd:summaryView")).inline, true, "remembered");
   $("#sumInline").click();
-  assert.equal(JSON.parse(localStorage.getItem("fd:summaryView")).inline, true);
-  $("#sumInline").click();
+  assert.equal($$("#summaryBody .agg-pred").length, 0);
 });
