@@ -3,11 +3,13 @@
 // Tabs: #summary (spending per category per month + category editor), #transactions, #settings.
 import { fmtMoney, fmtDate, el, accountBadge, accountColor } from "../extension/src/lib/ui.js";
 import { resolveSplits, parseMoneyInput } from "../extension/src/lib/splits.js";
-import { categoryIndex, uniqueId, validateCategories } from "../extension/src/lib/categories.js";
+import { categoryIndex, uniqueId, validateCategories, ARCHIVE_ID } from "../extension/src/lib/categories.js";
 import { applyState, editableState, trackedCents } from "../extension/src/lib/edits.js";
 import { onStorageChanged } from "../extension/src/lib/platform.js";
 import { OUTBOX_KEY, pendingCount } from "./lib/outbox.js";
 import { call } from "./lib/backend.js";
+import { MODELS } from "./lib/ai.js";
+import { renderAiTab } from "./ai-tab.js";
 
 const $ = (id) => document.getElementById(id);
 let accounts = [], txns = [], cats = { version: 2, groups: [] }, catIdx = new Map(), catOptionsHtml = "";
@@ -21,8 +23,17 @@ const UNCAT = "__uncat";
 
 function setStatus(msg, cls = "") { $("status").className = `status ${cls}`; $("status").textContent = msg; }
 
+// ---------- AI tab (see ai-tab.js) ----------
+const aiCtx = {
+  get txns() { return txns; }, get cats() { return cats; }, get accounts() { return accounts; }, get catIdx() { return catIdx; },
+  get loaded() { return loaded; },
+  call, setStatus,
+  /** Category-only edit that keeps note, splits and counted amount. */
+  setCategory(t, category) { commitEdit(t, { category }); },
+};
+
 // ---------- tabs ----------
-const TABS = ["summary", "transactions", "settings"];
+const TABS = ["summary", "transactions", "ai", "settings"];
 let tab = null;
 let editingCategories = false;
 
@@ -38,6 +49,7 @@ function renderTab() {
   if (tab === "summary") renderSummary();
   else if (tab === "transactions") renderTransactions();
   else if (tab === "settings") renderSettings();
+  else if (tab === "ai") renderAiTab(aiCtx);
 }
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 
@@ -103,7 +115,8 @@ function setCategories(doc) {
   catIdx = categoryIndex(doc);
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   catOptionsHtml = `<option value="">Uncategorized</option>` + doc.groups.map((g) =>
-    `<optgroup label="${esc(g.name)}">${g.categories.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>`).join("");
+    `<optgroup label="${esc(g.name)}">${g.categories.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>`).join("")
+    + `<optgroup label="Hidden"><option value="${ARCHIVE_ID}">Archive</option></optgroup>`;
 }
 
 function catSelect(value, cls = "cell-select") {
@@ -113,6 +126,7 @@ function catSelect(value, cls = "cell-select") {
   if (value && !catIdx.has(value)) s.append(new Option(`(deleted: ${value})`, value));
   s.value = value || "";
   s.classList.toggle("uncat", !s.value); // faint text = still to do
+  s.classList.toggle("archived", s.value === ARCHIVE_ID);
   return s;
 }
 
@@ -265,7 +279,7 @@ function fillCategoryFilter() {
   const sel = $("filterCategory");
   const keep = sel.value;
   sel.innerHTML = "";
-  sel.append(new Option("All categories", ""), new Option("Uncategorized", UNCAT));
+  sel.append(new Option("All categories (not archived)", ""), new Option("Uncategorized", UNCAT), new Option("Archive", ARCHIVE_ID));
   for (const g of cats.groups) {
     const og = el("optgroup", { label: g.name });
     og.append(new Option(`All ${g.name}`, `g:${g.id}`));
@@ -290,7 +304,9 @@ function fillDateFilter() {
 }
 
 /** Does transaction t (or one of its split parts) fall in category filter f? */
+const isArchived = (t) => (t.splits?.length ? t.splits.every((s) => s.category === ARCHIVE_ID) : t.category === ARCHIVE_ID);
 function inCategory(t, f) {
+  if (f !== ARCHIVE_ID && isArchived(t)) return false; // archived rows only show under the Archive filter
   if (!f) return true;
   const cats_ = t.splits?.length ? t.splits.map((s) => s.category) : [t.category];
   if (f === UNCAT) return cats_.some((c) => !c || !catIdx.has(c));
@@ -308,7 +324,8 @@ function renderTransactions() {
   const rows = txns.filter((t) => (!acct || t.accountId === acct) && t.date.startsWith(dateF) && inCategory(t, catF)
     && (!q || t.description.toLowerCase().includes(q) || (t.note || "").toLowerCase().includes(q) || (t.merchant || "").toLowerCase().includes(q)));
   const net = rows.reduce((s, t) => s + trackedCents(t), 0);
-  $("count").textContent = `${rows.length} transaction${rows.length === 1 ? "" : "s"} · net ${fmtMoney(net)}`;
+  const hidden = catF === ARCHIVE_ID ? 0 : txns.filter((t) => isArchived(t) && (!acct || t.accountId === acct) && t.date.startsWith(dateF)).length;
+  $("count").textContent = `${rows.length} transaction${rows.length === 1 ? "" : "s"} · net ${fmtMoney(net)}${hidden ? ` · ${hidden} archived hidden` : ""}`;
   const accts = byId();
   rowEls.clear();
   const body = el("tbody");
@@ -347,7 +364,7 @@ function rowFor(t, accts = byId()) {
   } else {
     catCell = catSelect(t.category);
     if (t.categorySource && t.categorySource !== "user") catCell.title = `set by ${t.categorySource}`;
-    catCell.onchange = () => { catCell.classList.toggle("uncat", !catCell.value); commitEdit(t, { category: catCell.value || null }); };
+    catCell.onchange = () => { catCell.classList.toggle("uncat", !catCell.value); catCell.classList.toggle("archived", catCell.value === ARCHIVE_ID); commitEdit(t, { category: catCell.value || null }); };
   }
 
   const tr = el("tr", { class: `tx${expanded.has(t.id) ? " open" : ""}` },
@@ -612,7 +629,7 @@ function drawCategoryEditor() {
   const box = $("summaryBody");
   box.innerHTML = "";
   const used = usageCounts();
-  const allIds = () => draft.groups.flatMap((g) => g.categories.map((c) => c.id));
+  const allIds = () => [ARCHIVE_ID, ...draft.groups.flatMap((g) => g.categories.map((c) => c.id))];
   const dirty = () => JSON.stringify(draft) !== JSON.stringify(cats);
   const markDirty = () => { $("catDirty").textContent = dirty() ? "Unsaved changes" : ""; };
 
@@ -682,7 +699,34 @@ function drawCategoryEditor() {
 // ---------- settings tab ----------
 function renderSettings() {
   renderConnection();
+  renderAiSettings();
   renderAccounts();
+}
+
+async function renderAiSettings() {
+  const box = $("aiSettingsPanel");
+  const c = await call("getConnection");
+  box.innerHTML = "";
+  const key = el("input", { id: "sAnthropicKey", type: "password", autocomplete: "off", placeholder: c.hasAnthropicKey ? "saved (leave blank to keep)" : "sk-ant-…" });
+  const model = el("select", { id: "sAiModel" }, Object.entries(MODELS).map(([id, m]) => el("option", { value: id }, m.label)));
+  model.value = c.aiModel;
+  const save = el("button", { class: "primary" }, "Save");
+  const forget = el("button", { disabled: !c.hasAnthropicKey }, "Forget key");
+  const msg = el("span", { class: "muted" });
+  save.onclick = async () => {
+    await call("saveConnection", { settings: { anthropicKey: key.value, aiModel: model.value } });
+    await renderAiSettings();
+    $("aiSettingsPanel").querySelector(".row:last-child span").textContent = "Saved ✓";
+  };
+  forget.onclick = async () => { await call("saveConnection", { settings: {}, forget: ["anthropicKey"] }); renderAiSettings(); };
+  box.append(
+    el("h2", { style: "margin-top:0" }, "Claude API (AI categorize)"),
+    el("div", { class: "muted" }, "Your key is saved only in this browser and is sent only to api.anthropic.com. Haiku is the cheapest model and is usually enough for categorizing."),
+    el("div", { class: "settings-grid" },
+      el("div", {}, el("label", { for: "sAnthropicKey" }, "Anthropic API key"), key),
+      el("div", {}, el("label", { for: "sAiModel" }, "Model"), model)),
+    el("div", { class: "row", style: "margin-top:10px" }, save, forget, msg),
+  );
 }
 
 async function renderConnection() {

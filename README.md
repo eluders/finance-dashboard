@@ -31,6 +31,11 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
 - **Dashboard** (web): edit categories, notes and splits.
   - Changes show instantly and are saved to GitHub as one commit about a minute later, or right away with **Save now**.
   - Drag the ☰ handles to reorder categories or move them between groups.
+  - **Archive**: a built-in category for things that shouldn't count, like card payments and transfers. Archived transactions are hidden from the summary and the list unless you filter to Archive.
+  - **AI categorize**:
+    - Pick a date range, which transactions to send and which categories the AI may use, then explain anything special.
+    - It suggests category changes as rules. You review them before → after and apply the ones you want.
+    - It uses Claude Haiku by default (cheap; costs are shown). Add your Anthropic API key in Settings.
   - **Counted amount**: in a transaction's expanded row, count it as a different amount, e.g. $0 if it was reimbursed, or just your share. The bank amount is kept.
 
 ## Privacy and safety
@@ -41,7 +46,7 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
 - Your token is stored in browser storage: `chrome.storage.local` for the extension and `localStorage` for the dashboard site. It is never written to a repo.
   - On the web, every Pages site under your `github.io` address shares that storage. Don't host untrusted pages there.
   - Use a fine-grained token limited to the data repo. **Forget token** in Settings removes it from the browser.
-- The dashboard's Content-Security-Policy only lets the page talk to `api.github.com`.
+- The dashboard's Content-Security-Policy only lets the page talk to `api.github.com` and `api.anthropic.com`. AI categorize sends only the transactions you select: date, amount, description, note and category.
 - The extension and the dashboard both refuse to use a data repo that is public.
 
 ## Development
@@ -59,7 +64,8 @@ See [CLAUDE.md](CLAUDE.md) for the architecture and [DATA_LAYOUT.md](DATA_LAYOUT
 - [x] Wells Fargo extractor, checking and credit card
 - [x] Web dashboard on GitHub Pages: categories, notes, splits, buffered saves
 - [ ] Ally extractor, checking and credit card
-- [ ] Categorizer (in the dashboard): rules first, then the Claude API for the rest, with corrections feeding `rules.json` and `ai-notes.md`
+- [x] AI categorize: user-directed, rule-based suggestions with before/after review (Claude Haiku)
+- [ ] Learning loop: corrections feeding `rules.json` and `ai-notes.md`
 - [ ] Balance snapshots → net worth over time
 - [ ] Fidelity (Roth IRA), Ascensus, 401k, HSA: holdings and contribution extractors
 - [ ] Investment tracker: positions, cost basis, money-weighted return (XIRR), allocation vs. target, DCA suggestions

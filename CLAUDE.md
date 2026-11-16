@@ -10,7 +10,7 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
 - **Extraction is read-only.** Content scripts must never click, type, submit, or navigate on bank sites. If a page needs "load more", tell the user to click it.
 - **Never commit financial data to this code repo.** Captures go in `samples/` (gitignored). Don't paste real amounts/account numbers into tests: synthesize fixtures.
 - Secrets live only in browser storage, never in a repo. The extension uses `chrome.storage.local`. The web dashboard uses `localStorage` key `fd:settings`, and its Settings panel never echoes a saved token back into the page.
-- The web page's CSP (`web/index.html`) allows connections only to api.github.com. Add api.anthropic.com there when the categorizer lands, since the categorizer belongs in the web app.
+- The web page's CSP (`web/index.html`) allows connections only to api.github.com and api.anthropic.com.
 - Money is integer cents (`amountCents`), negative = out of the account. Dates are `YYYY-MM-DD`.
 
 ## Layout
@@ -31,8 +31,9 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
   - Files:
     - `index.html`
     - `dashboard.js`: hash-routed tabs. `#summary`: net outflow per category per month (split parts count separately, sections at `sectionBreak` groups, cells link to filtered transactions), plus "Edit categories" mode with the drag-to-reorder editor. `#transactions`: filters by account, category or group, and month, with inline note, category and split edits. `#settings`: connection and account colors.
-    - `lib/backend.js`: in-page operations and the auto-save timer.
+    - `lib/backend.js`: in-page operations, the auto-save timer, the Claude request (the key stays in this module), and the AI run log (localStorage `fd:aiRuns`).
     - `lib/outbox.js`.
+    - `ai-tab.js` + `lib/ai.js`: the AI categorize tab (see below).
   - Edits (note, category, splits, categories doc) never call GitHub directly. `edits.js` applies them in memory, and `outbox.js` buffers them in localStorage. They're flushed as one commit through `store.applyEdits` about 60s after the first unsaved edit, or on "Save now" or tab close.
   - The timer only runs while a tab is open. On load, unflushed edits are overlaid on the GitHub data and then saved.
   - To run it locally, start a static server at the repo root (e.g. `npx serve .`) and open `/web/`.
@@ -54,5 +55,14 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
 4. Return `{ method, transactions: [{date, description, amountCents, status, signSource, rawText, merchantGuess?}], account: {name, last4, type}, balanceCents?, warnings }`.
 5. Add a synthetic fixture test where practical.
 
-## Claude API (categorizer, upcoming)
-Called directly from the extension with `fetch` to `https://api.anthropic.com/v1/messages`. Browser calls need the header `anthropic-dangerous-direct-browser-access: true`. Default model: `claude-opus-5-5` unless the user picks another. Learning loop: user corrections → `corrections.json` → deterministic `rules.json` entries, plus periodic rewrites of `ai-notes.md`, which goes into the categorization prompt.
+## AI categorize (web `#ai` tab)
+- Called from the page with `fetch` to `https://api.anthropic.com/v1/messages`. It streams, uses API version `2026-10-21`, and sends the header `anthropic-dangerous-direct-browser-access: true`. There's no SDK because the page has no build step.
+- The default model is **`claude-haiku-5-5`**: the user asked for a cheap model. Sonnet and Opus can be picked in Settings. The form shows a token/cost estimate and warns above 100K prompt tokens, where Haiku's price is 5x.
+- Safety model: the AI can only *propose category changes*.
+  - It replies in a tiny rule language (`SET <category_id> WHERE <cond> AND ...`; see `web/lib/ai.js`).
+  - The page evaluates the rules, and only against the transactions it sent. Split transactions are never sent.
+  - Proposals are shown before → after and must be applied by the user.
+  - Applying is category-only, through `commitEdit`, which keeps note, splits and override. It's skipped if the category changed since the run.
+- The prompt is compact (`ref|date|amount|last4|description|note|category` lines), plus optional "merchant → category ×n" examples drawn from history.
+- The built-in **Archive** category (`ARCHIVE_ID = "archive"`, in `categories.js`) isn't part of the user's groups. Archived transactions are excluded from the summary, and from the transaction list unless the user filters to Archive.
+- Future learning loop: user corrections → `corrections.json` → deterministic `rules.json` entries, plus periodic rewrites of `ai-notes.md`, which goes into the categorization prompt.

@@ -4,6 +4,7 @@
 import * as store from "../../extension/src/lib/store.js";
 import { storage } from "../../extension/src/lib/platform.js";
 import { createOutbox } from "./outbox.js";
+import { callClaude, DEFAULT_MODEL, MODELS } from "./ai.js";
 
 /** chrome.alarms-like timer that fires only while the page is open. */
 function pageAlarms(onFire) {
@@ -28,20 +29,47 @@ function getOutbox() {
 /** Connection settings without the secrets themselves. */
 async function getConnection() {
   const s = await store.getSettings();
-  return { ghOwner: s.ghOwner || "", ghRepo: s.ghRepo || "", ghBranch: s.ghBranch || "main", hasToken: !!s.ghToken, hasAnthropicKey: !!s.anthropicKey };
+  return {
+    ghOwner: s.ghOwner || "", ghRepo: s.ghRepo || "", ghBranch: s.ghBranch || "main", hasToken: !!s.ghToken,
+    hasAnthropicKey: !!s.anthropicKey, aiModel: MODELS[s.aiModel] ? s.aiModel : DEFAULT_MODEL,
+  };
 }
 
 /** Blank secret fields keep the saved value; `forget` lists secrets to delete. */
 async function saveConnection({ settings, forget = [] }) {
   const patch = {};
-  for (const k of ["ghOwner", "ghRepo", "ghBranch"]) if (k in settings) patch[k] = String(settings[k]).trim();
+  for (const k of ["ghOwner", "ghRepo", "ghBranch", "aiModel"]) if (k in settings) patch[k] = String(settings[k]).trim();
   for (const k of ["ghToken", "anthropicKey"]) if (settings[k]?.trim()) patch[k] = settings[k].trim();
   for (const k of forget) patch[k] = "";
   await store.saveSettings(patch);
   return getConnection();
 }
 
+/** Runs the categorizer request with the saved key (the key never leaves this module except to Anthropic). */
+async function aiRequest({ system, user, onProgress, signal }) {
+  const s = await store.getSettings();
+  if (!s.anthropicKey) throw new Error("Add your Anthropic API key in Settings first.");
+  const model = MODELS[s.aiModel] ? s.aiModel : DEFAULT_MODEL;
+  return { model, ...(await callClaude({ apiKey: s.anthropicKey, model, system, user, onProgress, signal })) };
+}
+
+const AI_RUNS = "aiRuns";
+const MAX_RUNS = 30;
+const getAiRuns = async () => (await storage().get(AI_RUNS))[AI_RUNS] || [];
+async function saveAiRun({ run }) {
+  const runs = await getAiRuns();
+  const i = runs.findIndex((r) => r.id === run.id);
+  if (i >= 0) runs[i] = run; else runs.unshift(run); // updates keep their place in the log
+  await storage().set({ [AI_RUNS]: runs.slice(0, MAX_RUNS) });
+  return run;
+}
+async function deleteAiRun({ id }) { await storage().set({ [AI_RUNS]: (await getAiRuns()).filter((r) => r.id !== id) }); }
+
 const handlers = {
+  aiRequest,
+  getAiRuns,
+  saveAiRun,
+  deleteAiRun,
   getConnection,
   saveConnection,
   testConnection: () => store.testConnection(),

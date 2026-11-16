@@ -17,7 +17,21 @@ globalThis.setInterval = (fn, ms) => realSetInterval(fn, ms).unref();
 globalThis.setTimeout = (fn, ms) => { const t = realSetTimeout(fn, ms); if (ms > 1000) t.unref(); return t; };
 
 const gh = fakeGitHub();
-globalThis.fetch = gh.fetch;
+// GitHub goes to the fake repo; api.anthropic.com to a fake Claude that streams `claude.reply`
+const claude = { reply: "", requests: [] };
+globalThis.fetch = async (url, opts) => {
+  if (!String(url).startsWith("https://api.anthropic.com/")) return gh.fetch(url, opts);
+  claude.requests.push(JSON.parse(opts.body));
+  const ev = (e) => `event: ${e.type}
+data: ${JSON.stringify(e)}
+
+`;
+  return new Response([
+    ev({ type: "message_start", message: { usage: { input_tokens: 900, output_tokens: 1 } } }),
+    ev({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: claude.reply } }),
+    ev({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 30 } }),
+  ].join(""), { status: 200 });
+};
 localStorage.setItem("fd:settings", JSON.stringify({ ghOwner: "me", ghRepo: "finance-data", ghBranch: "main", ghToken: "t" }));
 const outboxNow = () => JSON.parse(localStorage.getItem("fd:outbox") || "{}");
 
@@ -263,6 +277,70 @@ test("counted-amount override from the expanded row: struck-through bank amount,
   assert.match(rowOf("SAFEWAY").nextElementSibling.querySelector(".override-editor .bad").textContent, /can't be split/);
   assert.match(rowOf("SAFEWAY").textContent, /Split · 3/);
 });
+
+test("Archive: hidden from the list and the summary unless filtered to Archive", async () => {
+  await go("#transactions");
+  const sel = rowOf("NETFLIX").querySelector("select");
+  sel.value = "archive"; fire(sel, "change");
+  fire($("#search"), "input"); // re-render the list
+  assert.equal(rowOf("NETFLIX"), undefined, "hidden by default");
+  assert.match($("#count").textContent, /1 archived hidden/);
+  $("#filterCategory").value = "archive"; fire($("#filterCategory"), "change");
+  assert.ok(rowOf("NETFLIX"), "shown when filtering to Archive");
+  assert.ok(rowOf("NETFLIX").querySelector("select").classList.contains("archived"));
+  $("#filterCategory").value = ""; fire($("#filterCategory"), "change");
+  await go("#summary");
+  assert.equal(sumRow("Archive"), undefined);
+  assert.equal(sumCells("Entertainment").join(""), "", "not counted anywhere");
+});
+
+test("AI categorize: scope → Claude → before/after review → apply changes only the category", async () => {
+  await go("#settings");
+  $("#sAnthropicKey").value = "sk-test";
+  button("#aiSettingsPanel", "Save").click();
+  await settle();
+  assert.equal(JSON.parse(localStorage.getItem("fd:settings")).anthropicKey, "sk-test");
+  assert.equal($("#sAnthropicKey").value, "", "key not shown back");
+  assert.equal($("#sAiModel").value, "claude-haiku-5-5", "cheap model by default");
+
+  await go("#ai");
+  assert.match($("#aiEstimate").textContent, /^0 transactions \(\+1 split, not sent\)/, "default scope: uncategorized only; splits never sent");
+  const archiveBox = $("#aiForm .cat-picker input[data-id='archive']");
+  archiveBox.checked = true; fire(archiveBox, "change");
+  assert.match($("#aiEstimate").textContent, /^1 transaction /);
+  const ta = $("#aiForm textarea");
+  ta.value = "Netflix is a subscription, not archived."; fire(ta, "input");
+
+  claude.reply = 'SET subscriptions WHERE text "NETFLIX"  # streaming\nSET bogus WHERE ids 1\n';
+  $("#aiRun").click();
+  await settle();
+  const body = claude.requests.at(-1);
+  assert.equal(body.model, "claude-haiku-5-5");
+  assert.match(body.messages[0].content, /NETFLIX\.COM/);
+  assert.doesNotMatch(body.messages[0].content, /SAFEWAY #1439 SANTA CLARA CA\|/, "split transaction not sent");
+  assert.match(body.messages[0].content, /Netflix is a subscription, not archived\./);
+
+  const card = $("#aiLog .ai-run");
+  assert.match(card.querySelector(".pill").textContent, /needs review/);
+  assert.match(card.textContent, /1 line of the reply couldn't be used/);
+  const row = card.querySelector(".ai-table tr");
+  assert.deepEqual([...row.children].slice(1, 7).map((td) => td.textContent), ["11-10-2026", "NETFLIX.COM · family plan", "-$12.99", "Archive", "→", "Subscriptions"]);
+  assert.match(card.querySelector(".ai-rule-head code").textContent, /SET subscriptions WHERE text "NETFLIX"/);
+  assert.equal(await onGitHubCategoryAfterApply(), "subscriptions");
+});
+
+async function onGitHubCategoryAfterApply() {
+  const before = pending();
+  button("#aiLog", "Apply 1 change").click();
+  await settle();
+  assert.match($("#aiLog .ai-run .pill").textContent, /applied/);
+  assert.equal(pending(), before, "same transaction's outbox entry is updated");
+  await go("#transactions");
+  const r = rowOf("NETFLIX");
+  assert.equal(r.querySelector("select").value, "subscriptions");
+  assert.equal(r.querySelector("input.cell-input").value, "family plan", "note untouched");
+  return outboxNow().tx[Object.keys(outboxNow().tx).find((k) => outboxNow().tx[k].state.note === "family plan")].state.category;
+}
 
 test("Settings tab: connection (token never shown back, can be forgotten) and account colors", async () => {
   await go("#settings");
