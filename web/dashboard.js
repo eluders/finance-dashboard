@@ -9,6 +9,7 @@ import { onStorageChanged } from "../extension/src/lib/platform.js";
 import { OUTBOX_KEY, pendingCount } from "./lib/outbox.js";
 import { call } from "./lib/backend.js";
 import { MODELS } from "./lib/ai.js";
+import { initCellSelect, isSelected, render as renderSelection } from "./cell-select.js";
 import { initAi, renderAiPanel, renderLogs, isPanelOpen, openPanel, review, toggleProposal } from "./ai-panel.js";
 import { catPicker, pickerIds, describeSelection, UNCAT } from "./cat-picker.js";
 
@@ -33,6 +34,16 @@ initAi({
   shownRows: () => shownRows(),
   filterLabel: () => filterLabel(),
   onReviewChange: () => { if (tab === "transactions") renderTransactions(); else if (tab === "logs") renderLogs(); },
+});
+
+// ---------- multi-select + copy/paste of categories (see cell-select.js) ----------
+let displayedRows = [];
+initCellSelect({
+  rows: () => displayedRows,
+  isActive: () => tab === "transactions" && !review(),
+  setCategory: (t, category) => { commitEdit(t, { category }); refreshRow(t); },
+  catName: (id) => (id == null ? "Uncategorized" : catIdx.get(id)?.name || id),
+  catOptionsHtml: () => catOptionsHtml,
 });
 
 // ---------- tabs ----------
@@ -266,7 +277,7 @@ function renderSummary() {
     tbody.append(line("Uncategorized", sums.get(UNCAT), { cls: "uncat-row", category: UNCAT }));
   }
 
-  body.append(el("div", { class: "card table-card" }, el("table", { class: "summary" },
+  body.append(el("div", { class: "card table-card summary-card" }, el("table", { class: "summary" },
     el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), cols.map((m) => el("th", { class: "num" }, MONTHS[m])), el("th", { class: "num total" }, "Total"), el("th", { class: "num avg", title: `Average over ${avgDiv} month${avgDiv === 1 ? "" : "s"}` }, "Avg / mo"))),
     tbody)));
 }
@@ -383,6 +394,7 @@ function renderTransactions() {
   }
 
   const accts = byId();
+  displayedRows = rows.slice(0, 2000);
   rowEls.clear();
   const body = el("tbody");
   for (const t of rows.slice(0, 2000)) {
@@ -406,6 +418,7 @@ function renderTransactions() {
       el("th", {}, rv ? "Before" : "Category"), rv ? el("th", { class: "after-col" }, "After (AI)") : null)),
     body,
   )));
+  renderSelection();
   if (isPanelOpen() && !rv) renderAiPanel();
 }
 
@@ -427,16 +440,16 @@ function rowFor(t, accts = byId()) {
     catCell.onchange = () => { catCell.classList.toggle("uncat", !catCell.value); catCell.classList.toggle("archived", catCell.value === ARCHIVE_ID); commitEdit(t, { category: catCell.value || null }); };
   }
 
-  const tr = el("tr", { class: `tx${expanded.has(t.id) ? " open" : ""}` },
+  const tr = el("tr", { class: `tx${expanded.has(t.id) ? " open" : ""}`, "data-id": t.id },
     el("td", {}, accountBadge(accts[t.accountId] || { id: t.accountId, name: t.accountId })),
     el("td", {}, fmtDate(t.date)),
     el("td", { title: t.description }, t.description),
     amountCell(t),
     el("td", { class: "edit" }, note),
-    el("td", { class: "edit" }, catCell),
+    el("td", { class: `edit cat-cell${isSelected(t.id) ? " selected" : ""}` }, catCell),
     afterCell(t),
   );
-  tr.onclick = (e) => { if (!e.target.closest("input, select, button, label")) toggle(t); };
+  tr.onclick = (e) => { if (!e.target.closest("input, select, button, label, td.cat-cell")) toggle(t); };
   return tr;
 }
 

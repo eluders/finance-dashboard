@@ -202,3 +202,18 @@ table.ai-table td.arrow { width: 24px; color: var(--muted); text-align: center; 
 table.ai-table td.after { font-weight: 600; color: var(--accent); }
 table.ai-table tr.skipped td, table.ai-table tr.unselected td { text-decoration: line-through; color: var(--muted); }
 pre.ai-reply { background: #f6f7fa; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; font-size: 12px; max-height: 300px; overflow: auto; }
+
+/* summary: freeze the header row (and the category column) like Excel. The card is the scroll area. */
+.summary-card { max-height: calc(100vh - 150px); }
+table.summary thead th { position: sticky; top: 0; z-index: 2; background: #fafbfc; box-shadow: inset 0 -1px 0 var(--line); }
+table.summary thead th.label { z-index: 3; }
+table.summary td.label { z-index: 1; }
+
+/* multi-select on the Category column */
+#txns td.cat-cell { user-select: none; }
+#txns td.cat-cell.selected { background: #d6e2ff; box-shadow: inset 3px 0 0 var(--accent); }
+#txns tr.tx td.cat-cell.selected .cell-select, #txns tr.tx td.cat-cell.selected .split-pill { border-color: #8eaaf0; background-color: #e8efff; }
+.sel-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 8px;
+  background: #fff; border: 1px solid #c9d3ea; border-radius: 12px; padding: 8px 12px; box-shadow: 0 10px 30px rgba(20, 30, 60, .18); white-space: nowrap; }
+.sel-bar select { max-width: 220px; }
+.sel-note { color: var(--accent); font-size: 12px; }

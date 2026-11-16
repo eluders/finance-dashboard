@@ -35,6 +35,11 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
     - `lib/outbox.js`.
     - `ai-panel.js` + `lib/ai.js`: the AI categorize panel on Transactions, and the `#logs` tab (see below).
     - `cat-picker.js`: checkbox category picker (group boxes, All/None/All but Archive, per-row "only"), used by the transaction filter and the AI panel. No "All <group>" pseudo-entries: the user wants the bold group rows themselves to be selectable.
+    - `cell-select.js`: Excel-style multi-select on the Category column.
+      - A click opens the dropdown. Mousedown is held back so it can become a drag; the dropdown opens via `showPicker()` on release.
+      - Drag, shift-click and ctrl-click select cells. Ctrl+C/V copy and paste a category, Delete clears, Ctrl+Z undoes the last bulk change.
+      - A floating bar offers the same actions. Split rows are skipped.
+    - The summary table header is frozen: the `.summary-card` is the scroll area, and its `thead th` and label column are sticky.
   - Edits (note, category, splits, categories doc) never call GitHub directly. `edits.js` applies them in memory, and `outbox.js` buffers them in localStorage. They're flushed as one commit through `store.applyEdits` about 60s after the first unsaved edit, or on "Save now" or tab close.
   - The timer only runs while a tab is open. On load, unflushed edits are overlaid on the GitHub data and then saved.
   - To run it locally, start a static server at the repo root (e.g. `npx serve .`) and open `/web/`.

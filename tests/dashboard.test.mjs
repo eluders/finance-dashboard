@@ -419,6 +419,76 @@ test("Logs: long results collapse to the first few rows, actions sit above them"
   await settle();
 });
 
+test("Category column: click opens the dropdown; drag selects; Ctrl+C / Ctrl+V; bar; Undo; Delete; shift/ctrl-click", async () => {
+  await store.commitImport({
+    accountId: acct.id, updates: [], removeIds: [], meta: {},
+    add: [
+      { date: "2026-11-05", amountCents: -500, description: "COFFEE ONE", status: "posted" },
+      { date: "2026-11-04", amountCents: -600, description: "COFFEE TWO", status: "posted" },
+      { date: "2026-11-03", amountCents: -700, description: "COFFEE THREE", status: "posted" },
+    ],
+  });
+  $("#reload").click();
+  await settle();
+  await go("#transactions");
+  const cell = (text) => rowOf(text).querySelector("td.cat-cell");
+  const mouse = (node, type, opts = {}) => node.dispatchEvent(new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...opts }));
+  const key = (k, opts = {}) => document.dispatchEvent(new window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...opts }));
+  const coffees = () => ["COFFEE ONE", "COFFEE TWO", "COFFEE THREE"].map((d) => rowOf(d).querySelector("select").value);
+
+  // a plain click still behaves like a dropdown (focused, ready to pick) and selects that one cell
+  const nfSelect = cell("NETFLIX").querySelector("select");
+  const down = new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+  nfSelect.dispatchEvent(down);
+  assert.equal(down.defaultPrevented, true, "native dropdown held back until we know it isn't a drag");
+  mouse(document.body, "mouseup");
+  assert.equal(document.activeElement, cell("NETFLIX").querySelector("select"));
+  assert.equal($$("#txns td.cat-cell.selected").length, 1);
+  key("c", { ctrlKey: true });
+  assert.match($("#selBar").textContent, /Copied "Subscriptions"/);
+
+  // drag down the column
+  mouse(cell("COFFEE ONE"), "mousedown");
+  mouse(cell("COFFEE TWO"), "mouseover");
+  mouse(rowOf("COFFEE THREE").children[2], "mouseover"); // anywhere on the row counts
+  mouse(document.body, "mouseup");
+  assert.equal($$("#txns td.cat-cell.selected").length, 3);
+  assert.notEqual(document.activeElement?.tagName, "SELECT", "a drag doesn't open a dropdown");
+  assert.match($("#selBar").textContent, /3 selected/);
+  key("v", { ctrlKey: true });
+  assert.deepEqual(coffees(), ["subscriptions", "subscriptions", "subscriptions"]);
+  assert.match($("#selBar").textContent, /Set 3 to Subscriptions/);
+  assert.equal($$("#txns td.cat-cell.selected").length, 3, "selection survives the paste");
+
+  // the bar's dropdown sets all of them; Undo reverts that bulk change
+  const barSel = $("#selBar select");
+  barSel.value = "dining"; fire(barSel, "change");
+  assert.deepEqual(coffees(), ["dining", "dining", "dining"]);
+  [...$$("#selBar button")].find((b) => b.textContent === "Undo").click();
+  assert.deepEqual(coffees(), ["subscriptions", "subscriptions", "subscriptions"]);
+  key("Delete");
+  assert.deepEqual(coffees(), ["", "", ""]);
+  assert.ok(rowOf("COFFEE ONE").querySelector("select").classList.contains("uncat"));
+
+  // shift-click extends from the last clicked cell; split rows are skipped on paste
+  mouse(cell("SAFEWAY"), "mousedown"); mouse(document.body, "mouseup");
+  mouse(cell("COFFEE TWO"), "mousedown", { shiftKey: true });
+  assert.equal($$("#txns td.cat-cell.selected").length, 4);
+  key("v", { ctrlKey: true });
+  assert.match($("#selBar").textContent, /Set 2 to Subscriptions · 1 split skipped/);
+  assert.deepEqual(coffees(), ["subscriptions", "subscriptions", ""]);
+  mouse(cell("NETFLIX"), "mousedown", { ctrlKey: true });
+  assert.equal($$("#txns td.cat-cell.selected").length, 3, "ctrl-click toggles one cell");
+
+  // clicking elsewhere clears the selection; edits are buffered like any other
+  mouse($(".brand"), "mousedown");
+  assert.equal($$("#txns td.cat-cell.selected").length, 0);
+  assert.equal($("#selBar").hidden, false, "Undo stays available");
+  await settle();
+  const states = Object.values(outboxNow().tx).map((e) => e.state.category);
+  assert.ok(states.filter((c) => c === "subscriptions").length >= 2);
+});
+
 test("Settings tab: connection (token never shown back, can be forgotten) and account colors", async () => {
   await go("#settings");
   assert.equal($("#sOwner").value, "me");

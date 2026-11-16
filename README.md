@@ -39,6 +39,9 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
     - Past sessions are on the **Logs** tab.
     - It uses Claude Haiku by default (cheap; costs are shown). Add your Anthropic API key in Settings.
   - **Counted amount**: in a transaction's expanded row, count it as a different amount, e.g. $0 if it was reimbursed, or just your share. The bank amount is kept.
+  - **Bulk categories**:
+    - On Transactions, drag down the Category column to select several rows. Shift-click extends the selection and Ctrl-click adds a single row.
+    - Ctrl+C on a cell copies its category, and Ctrl+V pastes it into everything selected. You can also use the bar at the bottom. Undo reverts the last bulk change.
 
 ## Privacy and safety
 
