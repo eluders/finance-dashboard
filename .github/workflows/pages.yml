@@ -1,0 +1,40 @@
+# Publishes the web dashboard to GitHub Pages on every push to main.
+# Only web/ and the shared data code it imports (extension/src/lib/) are published; no data is
+# involved: the page reads your private data repo in the browser with the token you enter.
+name: Deploy dashboard
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "extension/src/lib/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site (same relative paths as the repo, so no build step)
+        run: |
+          mkdir -p _site/extension/src
+          cp -r web _site/web
+          cp -r extension/src/lib _site/extension/src/lib
+          printf '<!DOCTYPE html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=web/"><a href="web/">Dashboard</a>\n' > _site/index.html
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

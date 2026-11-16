@@ -1,0 +1,64 @@
+# Finance Dashboard
+
+A personal finance tracker in two parts, with your data kept in a private GitHub repo:
+
+- **Chrome extension** (`extension/`): for extraction. Log in to a bank yourself, then click **Extract**. The extension reads the transactions on the page (read-only), compares them with what's already saved by date and amount, shows a preview, and commits the result to your data repo.
+- **Web dashboard** (`web/`): a static page hosted on GitHub Pages. It runs entirely in your browser and reads and writes the private data repo with a token you enter. It's for categories, notes, splits and, later, net worth and investments.
+
+## Setup
+
+1. **Create the data repo.** Make a new **private** GitHub repo, for example `finance-data`, and leave it empty.
+2. **Create a token.** Go to GitHub → Settings → Developer settings → Fine-grained tokens → Generate.
+   - Repository access: *Only select repositories* → `finance-data`
+   - Permissions: *Contents: Read and write*. Metadata: read is added automatically.
+3. **Load the extension.**
+   - Open `chrome://extensions` and turn on *Developer mode*.
+   - Click *Load unpacked* and pick the `extension/` folder.
+   - Open the extension's **Options**, then enter the owner, repo and token, plus the dashboard's web address.
+   - Click **Test connection**, then **Initialize data repo**.
+4. **Host the dashboard.**
+   - Push this code repo to GitHub.
+   - In that repo, go to Settings → Pages → Source and choose **GitHub Actions**.
+   - `.github/workflows/pages.yml` deploys on every push to `main`. The page is at `https://<you>.github.io/<this-repo>/`.
+   - Open the page, click **Settings ⚙**, and enter the same owner, repo and token. The page keeps them in its own browser storage.
+
+After you edit the extension's code, reload it in `chrome://extensions`. To try the dashboard locally, start any static server from the repo root (for example `npx serve .`) and open `/web/`.
+
+## Using it
+
+- **Extract** (extension): runs the extractor that matches the site and detects the account. Click **Compare with saved**, then **Save**.
+- **Capture** (extension): downloads a stripped copy of the page's structure, with no scripts, amounts scrambled and account numbers masked. New site extractors are written from these captures. Put them in `samples/<institution>/`, which is gitignored.
+- **Dashboard** (web): edit categories, notes and splits.
+  - Changes show instantly and are saved to GitHub as one commit about a minute later, or right away with **Save now**.
+  - Drag the ☰ handles to reorder categories or move them between groups.
+
+## Privacy and safety
+
+- The extension uses `activeTab`, so it can only see a bank page when you click its button. It has no standing access to any bank site.
+- Content scripts only read the DOM. They never click, type or submit anything.
+- **No financial data ever goes into this code repo or onto the Pages site.** The site is only code. Your transactions are fetched from the private data repo by your browser, using your token.
+- Your token is stored in browser storage: `chrome.storage.local` for the extension and `localStorage` for the dashboard site. It is never written to a repo.
+  - On the web, every Pages site under your `github.io` address shares that storage. Don't host untrusted pages there.
+  - Use a fine-grained token limited to the data repo. **Forget token** in Settings removes it from the browser.
+- The dashboard's Content-Security-Policy only lets the page talk to `api.github.com`.
+- The extension and the dashboard both refuse to use a data repo that is public.
+
+## Development
+
+```
+npm test          # parsing, dedupe, store, outbox, and the dashboard driven in jsdom (Node 20+)
+```
+
+See [CLAUDE.md](CLAUDE.md) for the architecture and [DATA_LAYOUT.md](DATA_LAYOUT.md) for the data schema.
+
+## Roadmap
+
+- [x] Extension skeleton, GitHub storage, atomic commits, dedupe/preview
+- [x] Page capture tool for writing extractors
+- [x] Wells Fargo extractor, checking and credit card
+- [x] Web dashboard on GitHub Pages: categories, notes, splits, buffered saves
+- [ ] Ally extractor, checking and credit card
+- [ ] Categorizer (in the dashboard): rules first, then the Claude API for the rest, with corrections feeding `rules.json` and `ai-notes.md`
+- [ ] Balance snapshots → net worth over time
+- [ ] Fidelity (Roth IRA), Ascensus, 401k, HSA: holdings and contribution extractors
+- [ ] Investment tracker: positions, cost basis, money-weighted return (XIRR), allocation vs. target, DCA suggestions

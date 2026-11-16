@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <!-- Only our own scripts may run, and the page may only talk to GitHub's API. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://api.github.com; base-uri 'none'; form-action 'none'" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="robots" content="noindex" />
+  <title>Finance Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="row" style="justify-content: space-between">
+    <h1>Finance Dashboard</h1>
+    <div class="row">
+      <span id="saveState"></span>
+      <button id="saveNow" disabled>Save now</button>
+      <button id="toggleCategories">Categories ⚙</button>
+      <button id="toggleAccounts">Accounts ⚙</button>
+      <button id="toggleSettings">Settings ⚙</button>
+      <button id="reload">Reload</button>
+    </div>
+  </div>
+  <div id="failedEdits" class="box warn" hidden><span id="failedText"></span><button id="dismissFailed">Dismiss</button></div>
+  <div id="settingsPanel" class="box panel" hidden></div>
+  <div id="categoryPanel" class="box panel" hidden></div>
+  <div id="accountPanel" class="box panel" hidden></div>
+  <div class="row" style="margin: 8px 0">
+    <select id="filterAccount"><option value="">All accounts</option></select>
+    <input id="search" placeholder="Search description or note" />
+    <span id="count" class="muted"></span>
+  </div>
+  <div id="status" class="status"></div>
+  <div id="txns"></div>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

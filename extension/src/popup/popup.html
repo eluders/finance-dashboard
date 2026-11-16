@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body { width: 720px; max-height: 590px; padding: 12px; }
+    #preview { max-height: 280px; overflow: auto; }
+    #accountBox { margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="row" style="justify-content: space-between">
+    <h1>Finance Dashboard</h1>
+    <button id="openOptions">Options</button>
+  </div>
+  <div id="notConfigured" class="box warn" hidden>GitHub data repo not configured. Open <b>Options</b> first.</div>
+  <div id="lastSaveError" class="box bad" hidden></div>
+  <div class="muted" id="pageInfo"></div>
+
+  <div class="row" style="margin-top: 8px">
+    <button id="extract" class="primary">Extract</button>
+    <button id="capture" title="Save a stripped copy of this page's structure so an extractor can be written">Capture</button>
+    <label class="row" style="margin: 0" title="Scramble amounts and mask account numbers in the capture"><input type="checkbox" id="redact" checked /> redact</label>
+  </div>
+  <button id="openDashboard" class="big green" style="margin-top: 8px">Dashboard</button>
+
+  <div id="result" hidden>
+    <div class="box">
+      <div id="summary"></div>
+      <div id="warnings" class="warn"></div>
+      <div id="accountBox"></div>
+      <div class="row" style="margin-top: 6px">
+        <button id="compare" class="primary">Compare with saved</button>
+      </div>
+    </div>
+    <div id="preview"></div>
+    <div class="row" style="margin-top: 8px">
+      <button id="save" class="primary" hidden>Save</button>
+    </div>
+  </div>
+  <div id="status" class="status"></div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

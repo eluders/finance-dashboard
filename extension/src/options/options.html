@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Finance Dashboard — Options</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>body { max-width: 560px; margin: 24px auto; padding: 0 16px; } input { width: 100%; }</style>
+</head>
+<body>
+  <h1>Finance Dashboard — Options</h1>
+  <p class="muted">Secrets are stored only in this browser profile (<code>chrome.storage.local</code>), never in the repo.</p>
+
+  <h2>GitHub data repo</h2>
+  <label for="ghOwner">Owner (your GitHub username)</label>
+  <input id="ghOwner" />
+  <label for="ghRepo">Private repo name</label>
+  <input id="ghRepo" placeholder="finance-data" />
+  <label for="ghBranch">Branch</label>
+  <input id="ghBranch" placeholder="main" />
+  <label for="ghToken">Fine-grained personal access token (this repo only; Contents: Read and write)</label>
+  <input id="ghToken" type="password" autocomplete="off" />
+
+  <h2>Dashboard</h2>
+  <label for="dashboardUrl">Web address of your dashboard (opened by the popup's Dashboard button)</label>
+  <input id="dashboardUrl" placeholder="https://YOUR-USERNAME.github.io/finance-dashboard/" />
+
+  <div class="row" style="margin-top: 16px">
+    <button id="save" class="primary">Save</button>
+    <button id="test">Test connection</button>
+    <button id="init">Initialize data repo</button>
+  </div>
+  <div id="status" class="status"></div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>
