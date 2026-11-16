@@ -401,6 +401,45 @@ test("one-time only: the AI isn't asked to remember, and NOTES in the reply are 
   const o2 = $("#aiOneTime"); o2.checked = false; fire(o2, "change");
 });
 
+test("Notes only: nothing from the table is sent; the reply becomes a notes update to approve", async () => {
+  await go("#transactions");
+  await settle();
+  const cb = $("#aiNotesOnly");
+  cb.checked = true; fire(cb, "change");
+  await settle();
+  assert.equal($("#aiPanel .ai-scope"), null, "no scope / category picker in notes-only mode");
+  assert.equal($("#aiPanel .cat-picker"), null);
+  assert.equal($("#aiRun").textContent, "Update notes");
+  assert.equal($("#aiRun").disabled, true, "needs something to remember");
+  $("#aiSession").value = "Venmo to my mom is Hangout with family."; fire($("#aiSession"), "input");
+  assert.equal($("#aiRun").disabled, false);
+
+  const before = gh.files().get("ai-notes.md");
+  claude.reply = "```\n" + before.trim() + "\n- Venmo to mom: Hangout with family.\n```";
+  $("#aiRun").click();
+  await settle();
+  const body = claude.requests.at(-1);
+  assert.match(body.system, /Merge it into the current notes/);
+  assert.doesNotMatch(body.messages[0].content, /NETFLIX|SAFEWAY|COFFEE/, "no transactions sent");
+  assert.match(body.messages[0].content, /What I want you to remember:\nVenmo to my mom/);
+
+  assert.ok(!document.body.classList.contains("reviewing"), "the table isn't put into review mode");
+  assert.equal($("#reviewBanner").hidden, true, "table unchanged");
+  assert.deepEqual([...$$("#aiPanel .notes-diff .add")].map((d) => d.textContent), ["+ - Venmo to mom: Hangout with family."], "code fences stripped; only the new line is added");
+  const apply = [...$$("#aiPanel button")].find((b) => b.textContent.startsWith("Apply"));
+  assert.equal(apply.textContent, "Apply 0 changes + notes");
+  apply.click();
+  await settle();
+  assert.match(gh.files().get("ai-notes.md"), /Venmo to mom: Hangout with family/);
+
+  await go("#logs");
+  assert.match($("#logsList .ai-run").textContent, /notes only/);
+  await go("#transactions");
+  await settle();
+  const cb2 = $("#aiNotesOnly"); cb2.checked = false; fire(cb2, "change");
+  await settle();
+});
+
 test("Logs: long results collapse to the first few rows, actions sit above them", async () => {
   const proposals = Array.from({ length: 8 }, (_, i) => ({ key: `x/${i}`, date: "2026-11-0" + (i + 1), description: `SHOP ${i}`, note: "", amountCents: -100 * (i + 1), from: null, to: "groceries", rule: 0, selected: true }));
   const runs = JSON.parse(localStorage.getItem("fd:aiRuns"));

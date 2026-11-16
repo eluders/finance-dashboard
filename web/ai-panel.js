@@ -10,13 +10,13 @@
 import { el, fmtMoney, fmtDate } from "../extension/src/lib/ui.js";
 import { ARCHIVE_ID } from "../extension/src/lib/categories.js";
 import { storage } from "../extension/src/lib/platform.js";
-import { buildPrompt, buildNotesPrompt, splitReply, diffLines, historyExamples, ambiguousMerchants, parseRules, evaluateRules, estimateTokens, estimateCost, MODELS, DEFAULT_MODEL } from "./lib/ai.js";
+import { buildPrompt, buildNotesPrompt, buildNotesUpdatePrompt, splitReply, diffLines, historyExamples, ambiguousMerchants, parseRules, evaluateRules, estimateTokens, estimateCost, MODELS, DEFAULT_MODEL } from "./lib/ai.js";
 import { catPicker, pickerIds } from "./cat-picker.js";
 
 const DRAFT_KEY = "aiDraft";
 const LOG_PREVIEW = 5;
 let ctx = null;
-let form = null;      // { allow: Set|null (= all), onlyUncat, oneTime, useHistory, session }
+let form = null;      // { allow: Set|null (= all), onlyUncat, oneTime, notesOnly, useHistory, session }
 let model = DEFAULT_MODEL;
 let running = null;   // { id, abort }
 let reviewing = null; // run being reviewed in the table
@@ -36,7 +36,7 @@ export function closePanel() { document.body.classList.remove("ai-open"); }
 
 /** For the table: { run, byKey } while a run is being reviewed, else null. */
 export function review() {
-  if (!reviewing) return null;
+  if (!reviewing?.proposals.length) return null; // (a notes-only run leaves the table alone)
   return { run: reviewing, byKey: new Map(reviewing.proposals.map((p) => [p.key, p])) };
 }
 export function toggleProposal(key, on) {
@@ -50,7 +50,7 @@ export function toggleProposal(key, on) {
 async function loadForm() {
   if (form) return;
   const saved = (await storage().get(DRAFT_KEY))[DRAFT_KEY] || {};
-  form = { allow: saved.allow ? new Set(saved.allow) : null, onlyUncat: saved.onlyUncat ?? true, oneTime: !!saved.oneTime, useHistory: saved.useHistory ?? true, session: saved.session || "" };
+  form = { allow: saved.allow ? new Set(saved.allow) : null, onlyUncat: saved.onlyUncat ?? true, oneTime: !!saved.oneTime, notesOnly: !!saved.notesOnly, useHistory: saved.useHistory ?? true, session: saved.session || "" };
 }
 function saveDraft() { storage().set({ [DRAFT_KEY]: { ...form, allow: form.allow ? [...form.allow] : null } }); }
 const allowSet = () => form.allow || new Set(pickerIds(ctx.cats, { uncat: false }));
@@ -67,6 +67,9 @@ function scope() {
 }
 
 function prompt() {
+  if (form.notesOnly) {
+    return { ...buildNotesUpdatePrompt({ categories: ctx.cats, aiNotes: savedNotes(), instructions: form.session }), refs: [], accounts: {}, allowed: new Set() };
+  }
   const { txns } = scope();
   const allowed = allowSet();
   const accounts = Object.fromEntries(ctx.accounts.map((a) => [a.id, a]));
@@ -94,6 +97,25 @@ export async function renderAiPanel() {
   box.append(el("div", { class: "row ai-panel-head" }, el("h2", {}, "AI categorize"), el("span", { class: "muted small" }, MODELS[model]?.label.replace(/ \(.*/, "") || model), el("div", { class: "spacer" }), close));
   if (reviewing) { box.append(reviewPanel()); return; }
 
+  const notesOnly = el("input", { type: "checkbox", checked: form.notesOnly, id: "aiNotesOnly" });
+  notesOnly.onchange = () => { form.notesOnly = notesOnly.checked; saveDraft(); renderAiPanel(); };
+  const notesOnlyBox = el("label", { class: "cb notes-only", title: "Nothing from the table is sent; the AI just adds what you explain to its notes" }, notesOnly, el("b", {}, "Notes only"), el("span", { class: "muted small" }, " (don't categorize anything; just update the AI notes)"));
+  if (form.notesOnly) {
+    const session = el("textarea", { id: "aiSession", rows: 6, placeholder: "What should the AI remember? e.g.\n• Venmo to my mom is usually Hangout with family.\n• Anything at REI in winter is Skiing fees + gear." });
+    session.value = form.session;
+    session.oninput = () => { form.session = session.value; saveDraft(); updateEstimate(); };
+    const run = el("button", { class: "primary", id: "aiRun" }, "Update notes");
+    run.onclick = runAi;
+    const stop = el("button", { id: "aiStop", hidden: !running }, "Stop");
+    stop.onclick = () => running?.abort.abort();
+    box.append(notesOnlyBox, el("div", { class: "muted small" }, "Nothing from the table is sent. You'll see the proposed change to the notes before it's saved."),
+      el("label", { for: "aiSession" }, "What to remember"), session,
+      el("div", { class: "row", style: "margin-top:10px" }, run, stop), el("div", { id: "aiEstimate", class: "muted small" }), el("div", { id: "aiProgress", class: "muted small" }),
+      notesEditor());
+    updateEstimate();
+    return;
+  }
+
   const s = scope();
   box.append(
     el("div", { class: "ai-scope" }, el("b", {}, plural(s.txns.length, "transaction")), " from the table will be sent",
@@ -113,7 +135,7 @@ export async function renderAiPanel() {
   const hist = el("input", { type: "checkbox", checked: form.useHistory });
   hist.onchange = () => { form.useHistory = hist.checked; saveDraft(); updateEstimate(); };
   box.append(
-    el("label", { for: "aiSession" }, "Notes for this session"), session,
+    el("label", { for: "aiSession" }, "Notes for this session"), session, notesOnlyBox,
     el("label", { class: "cb", title: "The AI won't add anything from this session to its notes (e.g. \"archive everything before March\")" }, oneTime, "One-time only (don't remember this session)"),
     el("label", { class: "cb" }, hist, "Include how I've categorized merchants before"),
   );
@@ -174,17 +196,18 @@ function updateEstimate() {
   const long = m.longAbove && tokens > m.longAbove;
   out.className = `small ${long ? "warn" : "muted"}`;
   out.textContent = `≈${tokens.toLocaleString()} tokens in · ≈$${estimateCost(model, tokens, 3000).toFixed(tokens > 20000 ? 2 : 3)}${long ? ` · over ${m.longAbove.toLocaleString()} tokens costs ${m.inPerMLong / m.inPerM}× more: filter to fewer rows` : ""}`;
-  $("aiRun").disabled = !!running || !p.refs.length || !p.allowed.size;
+  $("aiRun").disabled = !!running || (form.notesOnly ? !form.session.trim() : !p.refs.length || !p.allowed.size);
 }
 
 // ---------- run ----------
 async function runAi() {
   const p = prompt();
-  if (!p.refs.length) return;
+  if (form.notesOnly ? !form.session.trim() : !p.refs.length) return;
   const notesBefore = savedNotes();
   const run = {
-    id: crypto.randomUUID(), at: new Date().toISOString(), status: "running", model,
-    scope: { label: ctx.filterLabel(), allow: [...p.allowed] }, instructions: form.session.trim(), oneTime: form.oneTime, txCount: p.refs.length,
+    id: crypto.randomUUID(), at: new Date().toISOString(), status: "running", model, mode: form.notesOnly ? "notes" : "categorize",
+    scope: { label: form.notesOnly ? "" : ctx.filterLabel(), allow: [...p.allowed] }, instructions: form.session.trim(),
+    oneTime: !form.notesOnly && form.oneTime, txCount: p.refs.length,
   };
   running = { id: run.id, abort: new AbortController() };
   $("aiRun").disabled = true; $("aiStop").hidden = false;
@@ -196,9 +219,10 @@ async function runAi() {
       onProgress: ({ chars, outputTokens }) => { const s = $("aiProgress"); if (s) s.textContent = `Receiving… ${outputTokens || 0} tokens (${chars} characters)`; },
     });
     const parts = splitReply(r.text);
-    const parsed = parseRules(parts.rules, p.allowed);
+    const parsed = run.mode === "notes" ? { rules: [], errors: [] } : parseRules(parts.rules, p.allowed);
     const { proposals, counts } = evaluateRules(parsed.rules, p.refs, p.accounts);
-    const notesAfter = !run.oneTime && parts.notes && parts.notes.trim() !== notesBefore.trim() ? parts.notes.trim() : null;
+    const newNotes = run.mode === "notes" ? (parts.notes ?? r.text).replace(/^```\w*\s*|```\s*$/g, "").trim() : parts.notes?.trim();
+    const notesAfter = !run.oneTime && newNotes && newNotes !== notesBefore.trim() ? newNotes : null;
     Object.assign(run, {
       model: r.model, reply: r.text, stopReason: r.stopReason, usage: r.usage,
       cost: estimateCost(r.model, r.usage.input_tokens || 0, r.usage.output_tokens || 0),
@@ -218,7 +242,7 @@ async function runAi() {
   await ctx.call("saveAiRun", { run });
   if (run.status === "review") startReview(run);
   else {
-    ctx.setStatus(run.status === "failed" ? `AI run failed: ${run.error}` : "The AI didn't suggest any changes.", run.status === "failed" ? "bad" : "muted");
+    ctx.setStatus(run.status === "failed" ? `AI run failed: ${run.error}` : run.mode === "notes" ? "The AI's notes already cover that; nothing to change." : "The AI didn't suggest any changes.", run.status === "failed" ? "bad" : "muted");
     renderAiPanel();
   }
 }
@@ -328,7 +352,7 @@ function runCard(run) {
   const statusText = { running: running?.id === run.id ? "running" : "interrupted", review: "needs review", applied: "applied", discarded: "discarded", done: "no changes", failed: "failed" }[run.status];
   const meta = [
     new Date(run.at).toLocaleString(), MODELS[run.model]?.label.replace(/ \(.*/, "") || run.model,
-    `${run.txCount} sent${run.scope?.label ? ` (${run.scope.label})` : ""}`, run.oneTime ? "one-time only" : "",
+    run.mode === "notes" ? "notes only" : `${run.txCount} sent${run.scope?.label ? ` (${run.scope.label})` : ""}`, run.oneTime ? "one-time only" : "",
     run.usage ? `${(run.usage.input_tokens || 0).toLocaleString()} in / ${(run.usage.output_tokens || 0).toLocaleString()} out tokens · $${run.cost.toFixed(4)}` : "",
   ].filter(Boolean).join(" · ");
   const del = el("button", { class: "icon", title: "Remove from log" }, "✕");

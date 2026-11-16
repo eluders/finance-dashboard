@@ -128,6 +128,22 @@ export function ambiguousMerchants(txns, { maxMerchants = 80, perMerchant = 6 } 
     .map(([k, list]) => `${k}: ${list.slice(-perMerchant).map((t) => `${money(t.amountCents)}→${t.category}${t.note ? ` (${clean(t.note).slice(0, 40)})` : ""}`).join("; ")}`);
 }
 
+/** "Notes only" session: fold what the user explains into the AI notes. No transactions; reply = the new notes. */
+export function buildNotesUpdatePrompt({ categories, aiNotes, instructions }) {
+  const catLines = categories.groups.flatMap((g) => g.categories.map((c) => `${c.id} = ${g.name} > ${c.name}`));
+  const system = [
+    "You maintain short categorization notes for one household's personal finances. Another model reads them to categorize transactions.",
+    "The household is explaining something they want remembered. Merge it into the current notes: add it, or update or replace whatever it contradicts. Keep everything else that is still true.",
+    "Write plain markdown bullets, concise, at most about 60 lines. Use the category names below. Reply with only the complete updated notes.",
+  ].join("\n");
+  const user = [
+    `Categories:\n${catLines.join("\n")}\n${ARCHIVE_ID} = Archive: hidden (transfers, card payments, not spending)`,
+    `Current AI notes:\n${aiNotes?.trim() || "(none yet)"}`,
+    `What I want you to remember:\n${instructions.trim()}`,
+  ].join("\n\n");
+  return { system, user };
+}
+
 /** Request for rewriting the AI-kept notes from the household's categorization history. Reply = the new notes. */
 export function buildNotesPrompt({ categories, aiNotes, examples, ambiguous }) {
   const catLines = categories.groups.flatMap((g) => g.categories.map((c) => `${c.id} = ${g.name} > ${c.name}`));

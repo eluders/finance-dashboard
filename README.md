@@ -36,6 +36,7 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
     - Filter the table to what you want categorized, add notes for the session if needed, and click **Categorize**.
     - The table then shows only the rows it would change, with an **After** column. Untick what you don't want, then **Apply**.
     - The AI keeps its own notes and proposes updates after each session, which you approve. Tick **One-time only** for things it shouldn't remember.
+    - Tick **Notes only** to just teach it something: nothing is categorized, and you approve the change to its notes.
     - Past sessions are on the **Logs** tab.
     - It uses Claude Haiku by default (cheap; costs are shown). Add your Anthropic API key in Settings.
   - **Counted amount**: in a transaction's expanded row, count it as a different amount, e.g. $0 if it was reimbursed, or just your share. The bank amount is kept.

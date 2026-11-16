@@ -70,6 +70,7 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
   - Each session has a free-text notes box. Unless "One-time only" is ticked, the model may end its reply with `NOTES:` plus the complete updated notes.
   - The panel shows the update as a +/− line diff, approved together with the category changes. It isn't saved if the notes changed since the run.
   - "Rebuild from my history" rewrites the notes from merchant history.
+  - "Notes only" sessions send no transactions (`buildNotesUpdatePrompt`). The reply is the complete updated notes, reviewed as a diff in the panel; the table isn't put in review mode (`review()` returns null for runs with no proposals).
 - Called from the page with `fetch` to `https://api.anthropic.com/v1/messages`. It streams, uses API version `2026-10-21`, and sends the header `anthropic-dangerous-direct-browser-access: true`. There's no SDK because the page has no build step.
 - The default model is **`claude-haiku-5-5`**: the user asked for a cheap model. Sonnet and Opus can be picked in Settings. The form shows a token/cost estimate and warns above 100K prompt tokens, where Haiku's price is 5x.
 - Safety model: the AI can only *propose category changes*.
