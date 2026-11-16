@@ -451,7 +451,7 @@ function renderTable(body) {
       return td;
     });
     const totalTd = moneyCell(total, { class: "total" });
-    const agg = aggCs && showPred ? { cs: aggCs, months: monthTds.map(withPred), total: withPred(totalTd) } : null;
+    const agg = aggCs ? { cs: aggCs, months: monthTds.map(withPred), total: withPred(totalTd) } : null;
     const tr = el("tr", { class: cls }, labelCell(label, category, archived, noteCat), monthTds, totalTd,
       moneyCell(avgDiv ? Math.round(total / avgDiv) : 0, { class: "avg" }),
       predTd, showPred ? el("td", { class: "monthly-col" }) : null);
@@ -577,9 +577,11 @@ function setCategoryNote(id, text) {
   }
 }
 
-/** The column header sticks just under the (sticky) top bar. */
+/** The Summary toolbar (Predictions, year, account, …) sticks under the top bar, and the column header under it. */
 function pinSummaryHead() {
-  document.documentElement.style.setProperty("--topbar-h", `${document.querySelector(".topbar")?.offsetHeight || 0}px`);
+  const css = document.documentElement.style;
+  css.setProperty("--topbar-h", `${document.querySelector(".topbar")?.offsetHeight || 0}px`);
+  css.setProperty("--sumbar-h", `${document.querySelector("#tab-summary > .toolbar")?.offsetHeight || 0}px`);
 }
 window.addEventListener("resize", pinSummaryHead);
 
@@ -949,6 +951,7 @@ function splitEditor(t) {
 
 // ---------- category editor (Summary → Edit categories) ----------
 let draft = null;
+let archiveOpen = false; // the collapsed ARCHIVE section
 
 function openCategoryEditor() {
   draft = structuredClone(cats);
@@ -1008,7 +1011,8 @@ function dropInto(container, selector, e) {
 function syncDraftFromDom() {
   draft.groups = [...$("summaryBody").querySelectorAll(".cat-groups > .cat-group")].map((gEl) => {
     const g = groupOf.get(gEl);
-    g.categories = [...gEl.querySelectorAll(".cat-row")].map((r) => catOf.get(r));
+    // archived categories aren't shown in their group (they're in the Archive section) but still belong to it
+    g.categories = [...[...gEl.querySelectorAll(".cat-row")].map((r) => catOf.get(r)), ...g.categories.filter((c) => c.archivedFrom)];
     return g;
   });
   drawCategoryEditor();
@@ -1022,6 +1026,38 @@ function drawCategoryEditor() {
   const dirty = () => JSON.stringify(draft) !== JSON.stringify(cats);
   const markDirty = () => { $("catDirty").textContent = dirty() ? "Unsaved changes" : ""; };
 
+  /** One category: name, usage, Archive… (or archived-from month + Unarchive), delete. Archived rows can't be dragged. */
+  const catRow = (g, c) => {
+    const name = el("input", { value: c.name, size: 26 });
+    name.oninput = () => {
+      c.name = name.value;
+      // brand-new categories take their id from the first real name
+      if (!cats.groups.some((x) => x.categories.some((y) => y.id === c.id)) && name.value.trim()) c.id = uniqueId(name.value, allIds().filter((id) => id !== c.id));
+      markDirty();
+    };
+    const n = used[c.id] || 0;
+    const del = el("button", { class: "icon", title: n ? `Used by ${n} transactions. Recategorize them first.` : "Delete category", disabled: n > 0 }, "✕");
+    del.onclick = () => { g.categories.splice(g.categories.indexOf(c), 1); drawCategoryEditor(); };
+    // Archive: from the chosen month on, the category is grayed out on the Summary and no longer offered
+    let archive;
+    if (c.archivedFrom) {
+      const month = el("input", { type: "month", class: "archive-month", value: c.archivedFrom, title: "First month it's archived", "aria-label": `${c.name} archived from` });
+      month.onchange = () => { if (month.value) { c.archivedFrom = month.value; markDirty(); } else month.value = c.archivedFrom; };
+      const un = el("button", { class: "icon", title: `Bring it back for every month (back into ${g.name})` }, "Unarchive");
+      un.onclick = () => { delete c.archivedFrom; drawCategoryEditor(); };
+      archive = el("span", { class: "archive-ctl" }, el("span", { class: "muted" }, "Archived from"), month, un);
+    } else {
+      archive = el("button", { class: "icon", title: "Retire this category from a month you pick (earlier months keep it). It moves to the Archive section below." }, "Archive…");
+      archive.onclick = () => { c.archivedFrom = new Date().toISOString().slice(0, 7); archiveOpen = true; drawCategoryEditor(); };
+    }
+    const row = el("div", { class: `row ${c.archivedFrom ? "archived-row" : "cat-row"}` });
+    if (c.archivedFrom) row.append(name, el("span", { class: "muted group-of", title: "Its group in earlier years" }, g.name));
+    else row.append(dragHandle(row, "cat"), name);
+    row.append(el("span", { class: "muted", style: "min-width:60px" }, n ? `${n} used` : ""), archive, del);
+    catOf.set(row, c);
+    return row;
+  };
+
   const groupEl = (g, gi) => {
     const gname = el("input", { class: "cat-group-name", value: g.name });
     gname.oninput = () => { g.name = gname.value; markDirty(); };
@@ -1033,38 +1069,13 @@ function drawCategoryEditor() {
     addCat.onclick = () => { g.categories.push({ id: uniqueId("new_category", allIds()), name: "New category" }); drawCategoryEditor(); };
     const brk = el("button", { class: `icon break-toggle${g.sectionBreak ? " on" : ""}`, title: "Leave a bigger gap before this group on the Summary", disabled: gi === 0 }, "Section break");
     brk.onclick = () => { if (g.sectionBreak) delete g.sectionBreak; else g.sectionBreak = true; drawCategoryEditor(); };
-    const delGroup = el("button", { class: "icon", title: g.categories.length ? "Move or delete its categories first" : "Delete group", disabled: g.categories.length > 0 }, "✕");
+    const active = g.categories.filter((c) => !c.archivedFrom);
+    const delGroup = el("button", { class: "icon", title: g.categories.length ? (active.length ? "Move or delete its categories first" : "Its archived categories still belong to it") : "Delete group", disabled: g.categories.length > 0 }, "✕");
     delGroup.onclick = () => { draft.groups.splice(draft.groups.indexOf(g), 1); drawCategoryEditor(); };
 
-    const list = el("div", { class: "cat-list" }, g.categories.map((c, ci) => {
-      const name = el("input", { value: c.name, size: 26 });
-      name.oninput = () => {
-        c.name = name.value;
-        // brand-new categories take their id from the first real name
-        if (!cats.groups.some((x) => x.categories.some((y) => y.id === c.id)) && name.value.trim()) c.id = uniqueId(name.value, allIds().filter((id) => id !== c.id));
-        markDirty();
-      };
-      const n = used[c.id] || 0;
-      const del = el("button", { class: "icon", title: n ? `Used by ${n} transactions. Recategorize them first.` : "Delete category", disabled: n > 0 }, "✕");
-      del.onclick = () => { g.categories.splice(ci, 1); drawCategoryEditor(); };
-      // Archive: from the chosen month on, the category is grayed out on the Summary and no longer offered
-      let archive;
-      if (c.archivedFrom) {
-        const month = el("input", { type: "month", class: "archive-month", value: c.archivedFrom, title: "First month it's archived", "aria-label": `${c.name} archived from` });
-        month.onchange = () => { if (month.value) { c.archivedFrom = month.value; markDirty(); } else month.value = c.archivedFrom; };
-        const un = el("button", { class: "icon", title: "Bring it back for every month" }, "Unarchive");
-        un.onclick = () => { delete c.archivedFrom; drawCategoryEditor(); };
-        archive = el("span", { class: "archive-ctl" }, el("span", { class: "muted" }, "Archived from"), month, un);
-      } else {
-        archive = el("button", { class: "icon", title: "Retire this category from a month you pick (earlier months keep it)" }, "Archive…");
-        archive.onclick = () => { c.archivedFrom = new Date().toISOString().slice(0, 7); drawCategoryEditor(); };
-      }
-      const row = el("div", { class: `row cat-row${c.archivedFrom ? " archived-cat" : ""}` });
-      row.append(dragHandle(row, "cat"), name, el("span", { class: "muted", style: "min-width:60px" }, n ? `${n} used` : ""), archive, del);
-      catOf.set(row, c);
-      return row;
-    }));
-    if (!g.categories.length) list.append(el("div", { class: "muted cat-empty" }, "Drag categories here"));
+    const list = el("div", { class: "cat-list" }, active.map((c) => catRow(g, c)));
+    const nArchived = g.categories.length - active.length;
+    if (!active.length) list.append(el("div", { class: "muted cat-empty" }, `Drag categories here${nArchived ? ` (${nArchived} archived)` : ""}`));
 
     const gEl = el("div", { class: `cat-group${g.sectionBreak && gi > 0 ? " section-start" : ""}${g.color ? " colored" : ""}`, style: g.color ? `--gc: ${g.color}` : null });
     gEl.append(el("div", { class: "row" }, dragHandle(gEl, "group"), color, gname, addCat, brk, delGroup, noColor), list);
@@ -1075,6 +1086,12 @@ function drawCategoryEditor() {
   };
 
   const groupsEl = el("div", { class: "cat-groups" }, draft.groups.map(groupEl));
+  // archived categories, collapsed at the bottom so the groups don't fill up with retired ones over time
+  const archived = draft.groups.flatMap((g) => g.categories.filter((c) => c.archivedFrom).map((c) => catRow(g, c)));
+  const archiveEl = el("details", { class: "cat-archive", open: archiveOpen || null },
+    el("summary", {}, `ARCHIVE (${archived.length})`, el("span", { class: "muted" }, " · archived categories, kept for the years they were used")),
+    archived.length ? archived : el("div", { class: "muted cat-empty" }, "Nothing archived. Use \"Archive…\" on a category."));
+  archiveEl.addEventListener("toggle", () => { archiveOpen = archiveEl.open; });
   groupsEl.addEventListener("dragover", (e) => { if (drag?.kind === "group") dropInto(groupsEl, ".cat-group", e); });
   const addGroup = el("button", {}, "+ Group");
   addGroup.onclick = () => { draft.groups.push({ id: uniqueId("group", draft.groups.map((g) => g.id)), name: "New group", categories: [] }); drawCategoryEditor(); };
@@ -1096,10 +1113,11 @@ function drawCategoryEditor() {
 
   box.append(el("div", { class: "card" },
     el("div", { class: "row", style: "justify-content:space-between" }, el("h2", { style: "margin:0" }, "Edit categories"), el("span", { id: "catDirty", class: "warn" }, dirty() ? "Unsaved changes" : "")),
-    el("div", { class: "muted", style: "margin:4px 0 8px" }, "Drag ☰ to reorder groups and categories, or to move a category into another group. This order is used in the summary and the dropdowns. Renaming keeps existing transactions linked. \"Section break\" leaves a bigger gap before this group on the Summary. \"Archive…\" retires a category from a month you pick: earlier years still show it, later months are grayed out, and anything still in it then shows red."),
+    el("div", { class: "muted", style: "margin:4px 0 8px" }, "Drag ☰ to reorder groups and categories, or to move a category into another group. This order is used in the summary and the dropdowns. Renaming keeps existing transactions linked. \"Section break\" leaves a bigger gap before this group on the Summary. \"Archive…\" retires a category from a month you pick and moves it into the ARCHIVE section at the bottom: earlier years still show it in its group, later months are grayed out, and anything still in it then shows red."),
     el("div", { class: "row", style: "margin-bottom:10px" }, actions()),
     groupsEl,
     el("div", { class: "row", style: "margin-top:10px" }, addGroup),
+    archiveEl,
     el("div", { class: "row", style: "margin-top:12px" }, actions()),
   ));
 }

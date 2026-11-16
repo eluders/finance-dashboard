@@ -205,7 +205,8 @@ pre.ai-reply { background: #f6f7fa; padding: 8px 10px; border-radius: 6px; white
 .sum-tables { min-width: 1100px; }
 .sum-tables .table-card { overflow: visible; margin-bottom: 8px; }
 .sum-tables .section-start { margin-top: 22px; }
-.sum-head { position: sticky; top: var(--topbar-h, 52px); z-index: 5; box-shadow: 0 2px 6px rgba(20, 30, 50, .06); }
+#tab-summary > .toolbar { position: sticky; top: var(--topbar-h, 52px); z-index: 6; background: var(--bg); margin: 0; padding: 4px 0 12px; }
+.sum-head { position: sticky; top: calc(var(--topbar-h, 52px) + var(--sumbar-h, 50px)); z-index: 5; box-shadow: 0 2px 6px rgba(20, 30, 50, .06); }
 .sum-tables table.summary { table-layout: fixed; width: 100%; min-width: 0; }
 .sum-tables table.summary th.label, .sum-tables table.summary td.label { position: static; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sum-tables col.c-label { width: 230px; }
@@ -287,3 +288,11 @@ tr:hover .note-btn { color: #8a909c; }
 .note-pop { position: absolute; z-index: 30; width: 320px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px; box-shadow: 0 6px 20px rgba(20, 30, 50, .15); }
 .note-pop-title { font-weight: 600; margin-bottom: 6px; }
 .note-pop textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; margin-bottom: 8px; }
+
+/* Edit categories: the collapsed ARCHIVE section */
+.cat-archive { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 10px; }
+.cat-archive > summary { cursor: pointer; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+.cat-archive > summary .muted { font-weight: 400; letter-spacing: 0; }
+.archived-row { padding: 3px 0 3px 26px; }
+.archived-row > input:not(.archive-month) { color: var(--muted); font-style: italic; }
+.archived-row .group-of { min-width: 110px; font-size: 12px; }

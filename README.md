@@ -35,7 +35,7 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
   - **Financial year**: Nov–Oct by default, named by the year it ends in (2027 = Nov 2026 – Oct 2027). Change the start month in Settings.
   - **Group colors**: pick a color for each group in Edit categories; the Summary tints that group's rows.
   - **Category notes**: click the small note icon at the left of a category row on the Summary to write a note about it. The icon turns blue when there's a note, and hovering shows it.
-  - **Archive a category**: Edit categories → "Archive…", then pick the first month it's retired. Earlier years still list it; from that month on its cells are grayed out, and anything still filed under it shows red so you can reassign it. Dropdowns stop offering it for later dates. "Unarchive" brings it back.
+  - **Archive a category**: Edit categories → "Archive…", then pick the first month it's retired. Earlier years still list it; from that month on its cells are grayed out, and anything still filed under it shows red so you can reassign it. Dropdowns stop offering it for later dates. In Edit categories it moves into the collapsed ARCHIVE section at the bottom; "Unarchive" puts it back in its group.
   - **Archive**: a built-in category for things that shouldn't count, like card payments and transfers. Archived transactions are hidden from the summary and the list unless you filter to Archive.
   - **AI categorize** (button on the Transactions tab):
     - Filter the table to what you want categorized, add notes for the session if needed, and click **Categorize**.

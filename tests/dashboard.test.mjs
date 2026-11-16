@@ -591,7 +591,8 @@ test("predictions inline: a row under each category, Monthly at the far right; l
   // hide the prediction rows; Predicted / mo stays
   $("#sumPred").click();
   assert.equal($$("#summaryBody tr.pred-row").length, 0);
-  assert.equal($$("#summaryBody .agg-pred").length, 0, "group headers show just the actual");
+  assert.equal(sumRow(groupName).children[6].querySelector(".agg-pred")?.textContent, "$1,200", "group headers still show the predicted sum under the actual");
+  assert.ok(!sumRow(groupName).classList.contains("no-pred"));
   assert.equal(sumRow("Groceries").children[15].textContent, "$120");
   $("#sumPred").click();
   assert.ok($$("#summaryBody tr.pred-row").length > 0);
@@ -731,7 +732,7 @@ test("Settings tab: connection (token never shown back, can be forgotten) and ac
 
 test("archived categories: from a chosen month; earlier years keep them; archived months gray, money left in them red", async () => {
   await go("#summary");
-  const editRow = (name) => $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === name);
+  const editRow = (name) => $$("#summaryBody .cat-row, #summaryBody .archived-row").find((r) => r.querySelector("input").value === name);
   const row = (name) => $$("#summaryBody tr").find((r) => r.dataset.key === name);
   const cells = (tr) => [...tr.children].slice(1, 13);
 
@@ -748,6 +749,23 @@ test("archived categories: from a chosen month; earlier years keep them; archive
   await settle();
   const saved = outboxNow().categories.doc.groups.flatMap((g) => g.categories);
   assert.equal(saved.find((c) => c.id === "subscriptions").archivedFrom, "2026-11");
+  const groupOfSubs = () => outboxNow().categories.doc.groups.find((g) => g.categories.some((c) => c.id === "subscriptions"))?.id;
+  const subsGroup = groupOfSubs();
+  assert.ok(subsGroup, "still belongs to its group (for earlier years)");
+
+  // in the editor, archived categories sit in the collapsed ARCHIVE section, not in their groups
+  $("#editCategories").click();
+  const arch = $("#summaryBody details.cat-archive");
+  assert.match(arch.querySelector("summary").textContent, /ARCHIVE \(2\)/);
+  assert.ok(arch.contains(editRow("Subscriptions")) && arch.contains(editRow("Travel")));
+  assert.ok(!$$("#summaryBody .cat-groups .cat-row").some((r) => r.querySelector("input").value === "Subscriptions"));
+  // reordering groups keeps them
+  const grs = () => $$("#summaryBody .cat-groups > .cat-group");
+  dragTo(grs()[0].querySelector(".drag-handle"), grs().at(-1), 99999);
+  assert.match($("#summaryBody details.cat-archive summary").textContent, /ARCHIVE \(2\)/);
+  button("#summaryBody", "Save categories").click();
+  await settle();
+  assert.equal(groupOfSubs(), subsGroup, "reordering didn't drop or move the archived category");
 
   // 2027 (Nov 2026 – Oct 2027): Travel is gone; Subscriptions stays because money is still in it, shown red
   $("#sumYear").value = "2027"; fire($("#sumYear"), "change");
