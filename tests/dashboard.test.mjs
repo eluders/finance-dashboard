@@ -138,14 +138,14 @@ test("split with a Remaining row: only one remainder, live math, applied locally
 
 test("summary: per-category monthly sums (split parts counted separately), group + subtotal rows", async () => {
   await go("#summary");
-  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Total", "Avg / mo", "Predicted / mo"], "all 12 months of the financial year, even ones still ahead");
-  assert.deepEqual(sumCells("Subscriptions"), ["$13", ...Array(11).fill(""), "$13", "$13", ""]);
-  assert.deepEqual(sumCells("Groceries"), ["$60", ...Array(11).fill(""), "$60", "$60", ""]);
-  assert.deepEqual(sumCells("Health & Medical"), ["$13", ...Array(11).fill(""), "$13", "$13", ""]); // the $12.50 split part
+  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Total", "Avg / mo", "Predicted / mo", "Monthly"], "all 12 months of the financial year, even ones still ahead");
+  assert.deepEqual(sumCells("Subscriptions"), ["$13", ...Array(11).fill(""), "$13", "$13", "", ""]);
+  assert.deepEqual(sumCells("Groceries"), ["$60", ...Array(11).fill(""), "$60", "$60", "", ""]);
+  assert.deepEqual(sumCells("Health & Medical"), ["$13", ...Array(11).fill(""), "$13", "$13", "", ""]); // the $12.50 split part
   assert.equal(sumRow("Food").classList.contains("group-row"), true);
-  assert.deepEqual(sumCells("Food"), ["$60", ...Array(11).fill(""), "$60", "$60", ""]);
-  assert.deepEqual(sumCells("Subtotal"), ["$85", ...Array(11).fill(""), "$85", "$85", ""]); // 12.99 + 12.50 + 60 = 85.49
-  assert.deepEqual(sumCells("Uncategorized"), ["$8", ...Array(11).fill(""), "$8", "$8", ""]); // the $7.50 remainder has no category
+  assert.deepEqual(sumCells("Food"), ["$60", ...Array(11).fill(""), "$60", "$60", "", ""]);
+  assert.deepEqual(sumCells("Subtotal"), ["$85", ...Array(11).fill(""), "$85", "$85", "", ""]); // 12.99 + 12.50 + 60 = 85.49
+  assert.deepEqual(sumCells("Uncategorized"), ["$8", ...Array(11).fill(""), "$8", "$8", "", ""]); // the $7.50 remainder has no category
   assert.equal(sumCells("Travel").join(""), "", "unused categories are listed, blank");
 });
 
@@ -530,54 +530,64 @@ test("Category column: blank strip + drag select; instant Ctrl+C / Ctrl+V with n
   assert.ok(states.filter((c) => c === "subscriptions").length >= 2);
 });
 
-test("Predict grid: monthly lock + one-offs; group sums; predicted column on Actual; no Minimize/Maximize", async () => {
+test("predictions inline: a row under each category, Monthly at the far right; lock + one-offs; group sums; toggle", async () => {
   await go("#summary");
-  if ($("#sumMode button.on")?.dataset.v !== "actual") button("#sumMode", "Actual").click();
   assert.equal($("#sumSide"), null, "the Minimize/Maximize toggle is gone");
+  assert.equal($("#sumMode"), null, "no separate Predict view");
   $("#editCategories").click();
   assert.equal($$("#summaryBody .cat-groups").length, 1, "one column of groups");
   button("#summaryBody", "Cancel").click();
-  const travelGroupName = "Food"; // Groceries' group
+  const groupName = "Food"; // Groceries' group
 
-  // Predict: Monthly fills and locks all 12 months
-  button("#sumMode", "Predict").click();
-  assert.ok($("#summaryBody table.predict"));
-  assert.equal($("#sumAccount").hidden, true, "predictions aren't per account");
+  // every category has a prediction row right under it; the Monthly box is the last column
+  assert.equal($("#sumPred").classList.contains("on"), true, "predictions shown by default");
+  const heads = $$("#summaryBody thead th").map((th) => th.textContent);
+  assert.deepEqual(heads.slice(-4), ["Total", "Avg / mo", "Predicted / mo", "Monthly"]);
+  const predRow = (label) => sumRow(label).nextElementSibling;
+  assert.ok(predRow("Travel").classList.contains("pred-row"));
+  const inputsOf = (label) => [...predRow(label).querySelectorAll("input")];
+  const months = inputsOf("Travel").slice(0, 12);
+  const monthly = inputsOf("Travel")[12];
+  assert.equal(inputsOf("Travel").length, 13);
+  assert.equal(monthly.closest("td"), predRow("Travel").lastElementChild, "Monthly is at the far right");
+  assert.equal(months[0].closest("td").cellIndex, sumRow("Travel").children[1].cellIndex, "months line up with the actual months");
   const year = $("#sumYear").value;
-  const inputsOf = (label) => [...sumRow(label).querySelectorAll("input")];
-  const [monthly, ...months] = inputsOf("Travel");
-  assert.equal(months.length, 12);
+
+  // Monthly fills and locks all 12 months
   monthly.value = "100"; fire(monthly, "change");
   assert.ok(months.every((i) => i.value === "100" && i.readOnly), "filled and locked");
-  const tds = (label) => [...sumRow(label).children].map((td) => td.textContent);
-  assert.deepEqual(tds("Travel").slice(-2), ["$1,200", "$100"]);
+  const tds = (tr) => [...tr.children].map((td) => td.textContent);
+  assert.equal(tds(predRow("Travel"))[13], "$1,200", "predicted total under Total");
+  assert.equal(sumRow("Travel").children[15].textContent, "$100", "Predicted / mo on the actual row");
   months[5].value = "5"; fire(months[5], "change");
   assert.equal(months[5].value, "100", "locked months can't be changed");
 
   // single months: a one-off spreads over the year
   const g = inputsOf("Groceries");
-  g[6].value = "1,200"; fire(g[6], "change");
-  g[7].value = "240.50"; fire(g[7], "change");
-  assert.deepEqual(tds("Groceries").slice(-2), ["$1,441", "$120"]);
-  assert.equal(g[1].readOnly, false);
-  assert.deepEqual(tds(travelGroupName).slice(-2), ["$1,441", "$120"], "group row sums its categories");
-  assert.ok(sumRow("Groceries").querySelector("td.pred") && $("#summaryBody .pred-input"), "predicted values use the orange class");
-  g[8].value = "abc"; fire(g[8], "change");
-  assert.equal(g[8].value, "", "bad input is put back");
+  g[5].value = "1,200"; fire(g[5], "change");
+  g[6].value = "240.50"; fire(g[6], "change");
+  assert.equal(tds(predRow("Groceries"))[13], "$1,441");
+  assert.equal(sumRow("Groceries").children[15].textContent, "$120");
+  assert.equal(g[0].readOnly, false);
+  assert.equal(predRow(groupName).children[6].textContent, "$1,200", "group prediction row sums its categories per month");
+  assert.equal(sumRow(groupName).children[15].textContent, "$120");
+  assert.ok(sumRow("Groceries").children[15].classList.contains("pred") && predRow("Groceries").querySelector(".pred-input"), "predicted values are orange");
+  g[7].value = "abc"; fire(g[7], "change");
+  assert.equal(g[7].value, "", "bad input is put back");
   assert.match($("#status").textContent, /isn't an amount/);
 
   // clearing Monthly keeps the filled months, now editable
   monthly.value = ""; fire(monthly, "change");
   assert.ok(months.every((i) => i.value === "100" && !i.readOnly));
   months[0].value = "400"; fire(months[0], "change");
-  assert.deepEqual(tds("Travel").slice(-2), ["$1,500", "$125"]);
+  assert.equal(sumRow("Travel").children[15].textContent, "$125");
 
-  // Actual: a Predicted / mo column on the right, in orange
-  button("#sumMode", "Actual").click();
-  const last = sumRow("Groceries").lastElementChild;
-  assert.equal(last.textContent, "$120");
-  assert.ok(last.classList.contains("pred"));
-  assert.equal(sumRow(travelGroupName).lastElementChild.textContent, "$120");
+  // hide the prediction rows; Predicted / mo stays
+  $("#sumPred").click();
+  assert.equal($$("#summaryBody tr.pred-row").length, 0);
+  assert.equal(sumRow("Groceries").children[15].textContent, "$120");
+  $("#sumPred").click();
+  assert.ok($$("#summaryBody tr.pred-row").length > 0);
 
   // saved with everything else: one commit with budget.json
   await settle();
@@ -592,26 +602,20 @@ test("Predict grid: monthly lock + one-offs; group sums; predicted column on Act
   // reload: budget comes back from GitHub
   $("#reload").click();
   await settle();
-  assert.equal(sumRow("Groceries").lastElementChild.textContent, "$120");
-  button("#sumMode", "Predict").click();
-  const gm = sumRow("Groceries").querySelector("input");
+  assert.equal(sumRow("Groceries").children[15].textContent, "$120");
+  const gm = inputsOf("Groceries")[12];
   gm.value = "50"; fire(gm, "change"); // left unsaved for the export test
-  button("#sumMode", "Actual").click();
-  assert.equal(sumRow("Groceries").lastElementChild.textContent, "$50");
+  assert.equal(sumRow("Groceries").children[15].textContent, "$50");
 });
 
 test("financial year: Nov–Oct by default, named by the year it ends in; adjustable in Settings; group colors", async () => {
   await go("#summary");
-  if (!$("#sumMode button.on") || $("#sumMode button.on").dataset.v !== "actual") button("#sumMode", "Actual").click();
   $("#sumYear").value = "2027"; fire($("#sumYear"), "change");
   assert.equal($("#sumRange").textContent, "Nov 2026 – Oct 2027", "Nov 2026 transactions belong to 2027");
   assert.equal($$("#summaryBody thead th")[1].textContent, "Nov");
   assert.ok(sumRow("Subscriptions").children[1].textContent, "November spending shows under 2027");
-  assert.ok(sumRow("Subscriptions").dataset.key === "subscriptions", "rows are keyed (keeps your place across Actual/Predict)");
-  button("#sumMode", "Predict").click();
-  assert.deepEqual($$("#summaryBody thead th").slice(2, 5).map((th) => th.textContent), ["Nov", "Dec", "Jan"]);
-  assert.match($("#summaryBody").textContent, /Predicted amounts for 2027 \(Nov 2026 – Oct 2027\)/);
-  button("#sumMode", "Actual").click();
+  assert.ok(sumRow("Subscriptions").dataset.key === "subscriptions", "rows are keyed (keeps your place when predictions are shown or hidden)");
+  assert.deepEqual($$("#summaryBody thead th").slice(1, 4).map((th) => th.textContent), ["Nov", "Dec", "Jan"]);
 
   // clicking a cell / the year filters Transactions by the financial year
   sumRow("Subscriptions").querySelector("td.label a").click();

@@ -33,9 +33,7 @@
 
     <section id="tab-summary" hidden>
       <div class="toolbar">
-        <div class="seg" id="sumMode" role="group" title="Actual spending, or your predicted amounts">
-          <button data-v="actual">Actual</button><button data-v="predict">Predict</button>
-        </div>
+        <button id="sumPred" class="toggle-btn" aria-pressed="true" title="Show or hide the prediction row under each category">Predictions</button>
         <select id="sumYear" title="Financial year (named by the year it ends in)"></select>
         <span id="sumRange" class="muted"></span>
         <select id="sumAccount" title="Account"><option value="">All accounts</option></select>

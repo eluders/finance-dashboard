@@ -1,6 +1,6 @@
 // Web dashboard (served by GitHub Pages). Reads/writes the private data repo directly with the
 // token saved in Settings. The shared data code lives in ../extension/src/lib/.
-// Tabs: #summary (per category per month, Actual/Predict, + category editor), #transactions, #settings.
+// Tabs: #summary (per category per month with prediction rows, + category editor), #transactions, #settings.
 import { fmtMoney, fmtDate, el, accountBadge, accountColor } from "../extension/src/lib/ui.js";
 import { resolveSplits, parseMoneyInput } from "../extension/src/lib/splits.js";
 import { categoryIndex, uniqueId, validateCategories, ARCHIVE_ID } from "../extension/src/lib/categories.js";
@@ -49,19 +49,19 @@ initCellSelect({
   setCategories: (items) => { const n = setTxCategories(items); for (const { t } of items) refreshRow(t); return n; },
 });
 
-// ---------- summary view: Actual / Predict (remembered in this browser) ----------
+// ---------- summary view: prediction rows shown or hidden (remembered in this browser) ----------
 const VIEW_KEY = "fd:summaryView";
-const view = (() => { try { return { mode: JSON.parse(localStorage.getItem(VIEW_KEY) || "{}").mode === "predict" ? "predict" : "actual" }; } catch (_) { return { mode: "actual" }; } })();
+const view = (() => { try { return { predict: JSON.parse(localStorage.getItem(VIEW_KEY) || "{}").predict !== false }; } catch (_) { return { predict: true }; } })();
 function setView(patch) {
-  const anchor = patch.mode && patch.mode !== view.mode ? summaryAnchor() : null;
+  const anchor = "predict" in patch && patch.predict !== view.predict ? summaryAnchor() : null;
   Object.assign(view, patch);
   try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {}
   renderSummary();
   if (anchor) restoreSummaryAnchor(anchor);
 }
 
-// Switching Actual <-> Predict keeps your place: the row at the top of the table stays at the top
-// (rows differ in height between the two, so a raw scroll offset would drift).
+// Showing/hiding predictions keeps your place: the row at the top of the table stays at the top
+// (prediction rows come and go above it, so a raw scroll offset would drift).
 const summaryCard = () => document.querySelector("#summaryBody .summary-card");
 function summaryAnchor() {
   const card = summaryCard();
@@ -80,7 +80,7 @@ function restoreSummaryAnchor(a) {
   const top = card.getBoundingClientRect().top + (card.querySelector("thead")?.offsetHeight || 0);
   card.scrollTop += row.getBoundingClientRect().top - top - a.off;
 }
-for (const b of $("sumMode").querySelectorAll("button")) b.onclick = () => setView({ mode: b.dataset.v });
+$("sumPred").onclick = () => setView({ predict: !view.predict });
 
 
 // ---------- tabs ----------
@@ -320,21 +320,26 @@ function showYearRange() {
 
 function renderSummary() {
   showYearRange();
-  $("sumMode").hidden = editingCategories;
-  for (const b of $("sumMode").querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === view.mode);
-  $("sumAccount").hidden = editingCategories || view.mode === "predict"; // predictions aren't per account
+  $("sumPred").hidden = editingCategories;
+  $("sumPred").classList.toggle("on", view.predict);
+  $("sumPred").setAttribute("aria-pressed", String(view.predict));
+  $("sumAccount").hidden = editingCategories;
   $("editCategories").hidden = editingCategories;
   const body = $("summaryBody");
   if (editingCategories) { drawCategoryEditor(); return; }
   body.innerHTML = "";
   if (!loaded) return;
-  if (view.mode === "predict") renderPredict(body);
-  else renderActual(body);
+  renderTable(body);
 }
 
-function renderActual(body) {
+// One table: each category's actual row, and (with Predictions on) a prediction row right under it
+// with an entry box per month, lined up with the actual months. The Monthly box sits in the last
+// column so the month columns don't move: it fills and locks all 12 months (lib/budget.js).
+const centsText = (c) => (c == null ? "" : c % 100 ? (c / 100).toFixed(2) : String(c / 100));
+function renderTable(body) {
   const year = $("sumYear").value;
   const acct = $("sumAccount").value;
+  const showPred = view.predict;
   const { sums, months } = monthlyTotals(year, acct);
   const cols = [...Array(12).keys()]; // every month of the financial year, including ones still ahead
   // the average covers the months that have data so far (first to last), not the empty future ones
@@ -342,72 +347,36 @@ function renderActual(body) {
   const goto = (category, m) => () => openTransactions({ category, date: m == null ? `fy:${year}` : fyMonth(year, m, fyStart()), account: acct });
   const names = fyMonthNames(fyStart());
   const catArr = (id) => sums.get(id) || Array(12).fill(0);
-  const predOf = (ids) => ids.reduce((s, id) => s + (entryAvg(budgetEntry(budget, year, id)) || 0), 0);
-
-  const line = (label, arr, { cls = "", category = null, pred = null } = {}) => {
-    const total = arr.reduce((a, b) => a + b, 0);
-    return el("tr", { class: cls },
-      el("td", { class: "label" }, category ? Object.assign(el("a", { href: "#transactions" }, label), { onclick: (e) => { e.preventDefault(); goto(category, null)(); } }) : label),
-      cols.map((m) => moneyCell(arr[m], category ? { onclick: goto(category, m) } : {})),
-      moneyCell(total, { class: "total" }),
-      moneyCell(avgDiv ? Math.round(total / avgDiv) : 0, { class: "avg" }),
-      pred == null ? el("td", { class: "pred-col" }) : moneyCell(pred, { class: "pred pred-col", title: `Predicted ${fmtMoney(pred)} a month` }));
-  };
-
-  const tbody = el("tbody");
-  const width = cols.length + 4;
-  sections(cats.groups).forEach((sec, si) => {
-    if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
-    for (const g of sec) {
-      const ids = g.categories.map((c) => c.id);
-      tbody.append(paint(line(g.name, sumArr(ids.map(catArr)), { cls: "group-row", category: `g:${g.id}`, pred: predOf(ids) }), g, "group", `g:${g.id}`));
-      for (const c of g.categories) tbody.append(paint(line(c.name, catArr(c.id), { cls: "cat-line", category: c.id, pred: predOf([c.id]) }), g, "cat", c.id));
-    }
-    const ids = sec.flatMap((g) => g.categories.map((c) => c.id));
-    tbody.append(paint(line("Subtotal", sumArr(ids.map(catArr)), { cls: "subtotal-row", pred: predOf(ids) }), null, "sub", `sub:${si}`));
-  });
-  if (sums.has(UNCAT)) {
-    tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
-    tbody.append(line("Uncategorized", sums.get(UNCAT), { cls: "uncat-row", category: UNCAT }));
-  }
-
-  body.append(el("div", { class: "card table-card summary-card" }, el("table", { class: "summary" },
-    el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), cols.map((m) => el("th", { class: "num", title: fyMonth(year, m, fyStart()) }, names[m])),
-      el("th", { class: "num total" }, "Total"),
-      el("th", { class: "num avg", title: avgDiv ? `Average over the ${avgDiv} month${avgDiv === 1 ? "" : "s"} with data so far` : "No transactions yet" }, "Avg / mo"),
-      el("th", { class: "num pred", title: "Predicted average per month (from Predict)" }, "Predicted / mo"))),
-    tbody)));
-}
-
-// Predict: every category × 12 months. A Monthly amount fills and locks all 12; otherwise each month
-// is entered on its own and the average is their sum / 12.
-const centsText = (c) => (c == null ? "" : c % 100 ? (c / 100).toFixed(2) : String(c / 100));
-function renderPredict(body) {
-  const year = $("sumYear").value;
-  const names = fyMonthNames(fyStart());
-  const catRows = []; // { id, monthly, months: [input×12], total, avg }
-  const aggRows = []; // { ids, months: [td×12], total, avg }
+  const entry = (id) => budgetEntry(budget, year, id);
+  const predAvg = (ids) => ids.reduce((s, id) => s + (entryAvg(entry(id)) || 0), 0);
   const setTd = (td, cents) => { td.textContent = cents ? dollars(cents) : ""; };
 
+  // live cells, recomputed after every prediction edit
+  const catRows = [];  // { id, monthly, months: [input×12], total }
+  const aggRows = [];  // { ids, months: [td×12], total }
+  const avgCells = []; // { ids, td }: the "Predicted / mo" column on actual rows
   const refresh = () => {
     for (const r of catRows) {
-      const e = budgetEntry(budget, year, r.id);
+      const e = entry(r.id);
       const vals = entryMonths(e);
       const locked = e?.monthly != null;
       if (document.activeElement !== r.monthly) r.monthly.value = centsText(e?.monthly ?? null);
       r.months.forEach((inp, m) => {
         inp.readOnly = locked;
-        inp.title = locked ? "Set by the Monthly amount. Clear Monthly to edit single months." : `${names[m]} ${fyMonth(year, m, fyStart()).slice(0, 4)}`;
+        inp.title = locked ? "Set by Monthly (far right). Clear it to edit single months." : `Predicted, ${names[m]} ${fyMonth(year, m, fyStart()).slice(0, 4)}`;
         if (document.activeElement !== inp || locked) inp.value = centsText(vals[m]);
       });
       setTd(r.total, vals.reduce((a, v) => a + (v || 0), 0));
-      setTd(r.avg, entryAvg(e) || 0);
     }
     for (const r of aggRows) {
-      const per = r.ids.map((id) => entryMonths(budgetEntry(budget, year, id)));
+      const per = r.ids.map((id) => entryMonths(entry(id)));
       r.months.forEach((td, m) => setTd(td, per.reduce((a, v) => a + (v[m] || 0), 0)));
       setTd(r.total, per.reduce((a, v) => a + v.reduce((x, y) => x + (y || 0), 0), 0));
-      setTd(r.avg, r.ids.reduce((a, id) => a + (entryAvg(budgetEntry(budget, year, id)) || 0), 0));
+    }
+    for (const { ids, td } of avgCells) {
+      const v = predAvg(ids);
+      setTd(td, v);
+      td.title = v ? `Predicted ${fmtMoney(v)} a month` : "";
     }
   };
   const commit = (next) => {
@@ -425,7 +394,7 @@ function renderPredict(body) {
     setStatus("");
     return { ok: true, cents };
   };
-  // Enter moves down a row in the same column, like a spreadsheet
+  // Enter moves to the next prediction row in the same column, like a spreadsheet
   const onKey = (e) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
@@ -434,49 +403,80 @@ function renderPredict(body) {
     if (next) { next.focus(); next.select(); } else e.target.blur();
   };
 
-  const catLine = (c) => {
-    const monthly = el("input", { class: "pred-input monthly", inputmode: "decimal", placeholder: "—", "data-col": "monthly", "aria-label": `${c.name} monthly` });
+  const labelCell = (label, category) => el("td", { class: "label" }, category
+    ? Object.assign(el("a", { href: "#transactions" }, label), { onclick: (e) => { e.preventDefault(); goto(category, null)(); } })
+    : label);
+  /** An actual row: 12 months, Total, Avg / mo, Predicted / mo, and an empty Monthly cell. */
+  const line = (label, arr, { cls = "", category = null, predIds = null } = {}) => {
+    const total = arr.reduce((a, b) => a + b, 0);
+    const predTd = el("td", { class: "num pred pred-col" });
+    if (predIds) avgCells.push({ ids: predIds, td: predTd });
+    return el("tr", { class: cls }, labelCell(label, category),
+      cols.map((m) => moneyCell(arr[m], category ? { onclick: goto(category, m) } : {})),
+      moneyCell(total, { class: "total" }),
+      moneyCell(avgDiv ? Math.round(total / avgDiv) : 0, { class: "avg" }),
+      predTd, el("td", { class: "monthly-col" }));
+  };
+  const predLabel = () => el("td", { class: "label pred-label" }, "predicted");
+  /** A category's prediction row: an entry box per month, the predicted total, and Monthly at the far right. */
+  const predCatLine = (c) => {
+    const monthly = el("input", { class: "pred-input monthly", inputmode: "decimal", placeholder: "—", "data-col": "monthly", "aria-label": `${c.name} monthly prediction`, title: "Fills and locks all 12 months" });
     monthly.onchange = () => {
-      const r = read(monthly, budgetEntry(budget, year, c.id)?.monthly ?? null);
+      const r = read(monthly, entry(c.id)?.monthly ?? null);
       if (r.ok) commit(setMonthly(budget, year, c.id, r.cents));
     };
-    const months = names.map((name, m) => {
-      const inp = el("input", { class: "pred-input", inputmode: "decimal", "data-col": String(m), "aria-label": `${c.name} ${name}` });
+    const inputs = names.map((name, m) => {
+      const inp = el("input", { class: "pred-input", inputmode: "decimal", "data-col": String(m), "aria-label": `${c.name} ${name} prediction` });
       inp.onchange = () => {
         if (inp.readOnly) { refresh(); return; }
-        const r = read(inp, entryMonths(budgetEntry(budget, year, c.id))[m]);
+        const r = read(inp, entryMonths(entry(c.id))[m]);
         if (r.ok) commit(setMonth(budget, year, c.id, m, r.cents));
       };
       return inp;
     });
-    for (const i of [monthly, ...months]) i.addEventListener("keydown", onKey);
-    const row = { id: c.id, monthly, months, total: el("td", { class: "num pred total" }), avg: el("td", { class: "num pred pred-col" }) };
+    for (const i of [...inputs, monthly]) i.addEventListener("keydown", onKey);
+    const row = { id: c.id, monthly, months: inputs, total: el("td", { class: "num pred total" }) };
     catRows.push(row);
-    return el("tr", { class: "cat-line" }, el("td", { class: "label" }, c.name), el("td", { class: "pcell" }, monthly),
-      months.map((i) => el("td", { class: "pcell" }, i)), row.total, row.avg);
+    return el("tr", { class: "pred-row" }, predLabel(), inputs.map((i) => el("td", { class: "pcell" }, i)),
+      row.total, el("td"), el("td", { class: "pred-col" }), el("td", { class: "pcell monthly-col" }, monthly));
   };
-  const aggLine = (label, ids, cls) => {
-    const row = { ids, months: names.map(() => el("td", { class: "num pred" })), total: el("td", { class: "num pred total" }), avg: el("td", { class: "num pred pred-col" }) };
+  /** Predicted sums for a group or section. */
+  const predAggLine = (ids, cls) => {
+    const row = { ids, months: names.map(() => el("td", { class: "num pred" })), total: el("td", { class: "num pred total" }) };
     aggRows.push(row);
-    return el("tr", { class: cls }, el("td", { class: "label" }, label), el("td"), row.months, row.total, row.avg);
+    return el("tr", { class: `pred-row ${cls}` }, predLabel(), row.months, row.total, el("td"), el("td", { class: "pred-col" }), el("td", { class: "monthly-col" }));
   };
 
   const tbody = el("tbody");
+  const width = 17;
   sections(cats.groups).forEach((sec, si) => {
-    if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: 16 })));
+    if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
     for (const g of sec) {
-      tbody.append(paint(aggLine(g.name, g.categories.map((c) => c.id), "group-row"), g, "group", `g:${g.id}`));
-      for (const c of g.categories) tbody.append(paint(catLine(c), g, "cat", c.id));
+      const ids = g.categories.map((c) => c.id);
+      tbody.append(paint(line(g.name, sumArr(ids.map(catArr)), { cls: "group-row", category: `g:${g.id}`, predIds: ids }), g, "group", `g:${g.id}`));
+      if (showPred) tbody.append(paint(predAggLine(ids, "group-pred"), g, "group"));
+      for (const c of g.categories) {
+        tbody.append(paint(line(c.name, catArr(c.id), { cls: "cat-line", category: c.id, predIds: [c.id] }), g, "cat", c.id));
+        if (showPred) tbody.append(paint(predCatLine(c), g, "cat"));
+      }
     }
-    tbody.append(paint(aggLine("Subtotal", sec.flatMap((g) => g.categories.map((c) => c.id)), "subtotal-row"), null, "sub", `sub:${si}`));
+    const ids = sec.flatMap((g) => g.categories.map((c) => c.id));
+    tbody.append(paint(line("Subtotal", sumArr(ids.map(catArr)), { cls: "subtotal-row", predIds: ids }), null, "sub", `sub:${si}`));
+    if (showPred) tbody.append(predAggLine(ids, "subtotal-pred"));
   });
+  if (sums.has(UNCAT)) {
+    tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
+    tbody.append(line("Uncategorized", sums.get(UNCAT), { cls: "uncat-row", category: UNCAT }));
+  }
 
-  body.append(
-    el("div", { class: "muted", style: "margin:-4px 0 8px" }, `Predicted amounts for ${year} (${fyRangeText(year, fyStart())}). A Monthly amount fills every month. Leave it blank to enter single months instead (one-offs); the average is their total over 12 months.`),
-    el("div", { class: "card table-card summary-card" }, el("table", { class: "summary predict" },
-      el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), el("th", { class: "num pred" }, "Monthly"),
-        names.map((m) => el("th", { class: "num" }, m)), el("th", { class: "num total" }, "Total"), el("th", { class: "num pred" }, "Avg / mo"))),
-      tbody)));
+  body.append(el("div", { class: "card table-card summary-card" }, el("table", { class: `summary${showPred ? " with-pred" : ""}` },
+    el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"),
+      cols.map((m) => el("th", { class: "num", title: fyMonth(year, m, fyStart()) }, names[m])),
+      el("th", { class: "num total" }, "Total"),
+      el("th", { class: "num avg", title: avgDiv ? `Average over the ${avgDiv} month${avgDiv === 1 ? "" : "s"} with data so far` : "No transactions yet" }, "Avg / mo"),
+      el("th", { class: "num pred", title: "Predicted average per month: Monthly, or the year's predicted months / 12" }, "Predicted / mo"),
+      el("th", { class: "num pred monthly-col", title: "Type an amount here to fill and lock all 12 predicted months. Leave it blank to enter single months (one-offs)." }, "Monthly"))),
+    tbody)));
   refresh();
 }
 

@@ -31,7 +31,7 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
 - **Dashboard** (web): edit categories, notes and splits.
   - Changes show instantly and are saved to GitHub as one commit about a minute later, or right away with **Save now**.
   - Drag the ☰ handles to reorder categories or move them between groups.
-  - **Predict** (Summary): enter predicted amounts per category per month. A Monthly amount fills and locks every month; otherwise enter single months (one-offs) and the average is their total over 12. The normal view shows a **Predicted / mo** column. Predicted numbers are orange. Switching between Actual and Predict keeps your place in the table.
+  - **Predictions** (Summary): under each category's actual row is a prediction row with a box for every month, so actual and predicted sit side by side. Type in **Monthly** (the last column) to fill and lock all 12 months, or leave it blank and enter single months (one-offs); the average is their total over 12. **Predicted / mo** shows the result, and the **Predictions** button hides the extra rows. Predicted numbers are orange.
   - **Financial year**: Nov–Oct by default, named by the year it ends in (2027 = Nov 2026 – Oct 2027). Change the start month in Settings.
   - **Group colors**: pick a color for each group in Edit categories; the Summary tints that group's rows.
   - **Archive**: a built-in category for things that shouldn't count, like card payments and transfers. Archived transactions are hidden from the summary and the list unless you filter to Archive.

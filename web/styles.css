@@ -229,13 +229,22 @@ table.summary td.label { z-index: 1; }
 table.summary .pred, table.summary .pred a { color: var(--pred); }
 table.summary th.pred { color: var(--pred); border-left: 1px solid var(--line); }
 table.summary td.pred-col { border-left: 1px solid var(--line); }
-table.summary.predict td.pcell { padding: 2px 2px; }
-table.summary.predict th.label, table.summary.predict td.label { min-width: 190px; }
-table.summary.predict td.num, table.summary.predict th.num { padding-left: 6px; padding-right: 6px; }
-.pred-input { width: 62px; text-align: right; color: var(--pred); padding: 3px 5px; font-variant-numeric: tabular-nums; }
-.pred-input.monthly { width: 74px; font-weight: 600; }
-.pred-input[readonly] { background: #fbf6f1; border-color: transparent; cursor: not-allowed; }
-table.summary.predict .group-row .pred, table.summary.predict .subtotal-row .pred { font-weight: 600; }
+/* prediction rows under each category (Summary → Predictions) */
+.toggle-btn.on { background: #fff4ea; color: var(--pred); border-color: #e6b98f; font-weight: 600; }
+table.summary:not(.with-pred) .monthly-col { display: none; }
+table.summary td.monthly-col, table.summary th.monthly-col { border-left: 1px solid var(--line); }
+table.summary.with-pred td.num, table.summary.with-pred th.num { padding-left: 6px; padding-right: 6px; }
+table.summary tr.pred-row td { padding-top: 1px; padding-bottom: 3px; border-top: none; }
+table.summary tr.pred-row td.pcell { padding: 1px 2px 3px; }
+table.summary td.pred-label { font-size: 11px; color: var(--pred); padding-left: 34px; font-style: italic; }
+tr.pred-row.group-pred td.pred, tr.pred-row.subtotal-pred td.pred { font-weight: 600; }
+.pred-input { width: 100%; min-width: 52px; box-sizing: border-box; text-align: right; color: var(--pred); padding: 2px 5px; font-size: 12px;
+  font-variant-numeric: tabular-nums; border-color: #eedfd1; background: #fffcf9; }
+.pred-input:hover { border-color: #ddb894; }
+.pred-input:focus { background: #fff; }
+.pred-input.monthly { min-width: 70px; font-weight: 600; border-color: #e6cdb6; }
+.pred-input[readonly] { background: transparent; border-color: transparent; cursor: not-allowed; }
+.pred-input[readonly]:hover { border-color: transparent; }
 
 /* group colors (Edit categories) */
 .group-color { width: 30px; height: 28px; padding: 2px; border-radius: 6px; cursor: pointer; flex: none; }
