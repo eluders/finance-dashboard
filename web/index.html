@@ -33,7 +33,12 @@
 
     <section id="tab-summary" hidden>
       <div class="toolbar">
-        <h2>Spending by category</h2>
+        <div class="seg" id="sumSide" role="group" title="Which categories to show">
+          <button data-v="minimize">Minimize</button><button data-v="maximize">Maximize</button>
+        </div>
+        <div class="seg" id="sumMode" role="group" title="Actual spending, or your predicted amounts">
+          <button data-v="actual">Actual</button><button data-v="predict">Predict</button>
+        </div>
         <select id="sumYear" title="Year"></select>
         <select id="sumAccount" title="Account"><option value="">All accounts</option></select>
         <div class="spacer"></div>

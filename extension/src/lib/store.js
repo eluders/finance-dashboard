@@ -4,6 +4,7 @@ import { resolveSplits } from "./splits.js";
 import { applyState, editableState, EDITABLE_FIELDS, trackedCents } from "./edits.js";
 import { normalizeCategories, validateCategories } from "./categories.js";
 import { storage } from "./platform.js";
+import { BUDGET_FILE, normalizeBudget, validateBudget } from "./budget.js";
 
 export const DEFAULT_CATEGORIES = [
   { id: "income", name: "Income", group: "Income" },
@@ -156,6 +157,12 @@ export async function saveCategories(doc) {
   return doc;
 }
 
+export async function getBudget() {
+  const repo = await getRepo();
+  const head = await repo.headSha();
+  return normalizeBudget(head ? await repo.readJSON(BUDGET_FILE, head, null) : null);
+}
+
 const corrEntry = (t, accountId, c, at) => ({ at, txId: t.id, accountId, description: t.description, merchant: t.merchant, amountCents: t.amountCents, ...c });
 
 /** Finds a stored transaction by id, looking in its year's file and the neighbors (dates can cross Dec/Jan when pending posts). */
@@ -172,11 +179,12 @@ async function locate(getDoc, accountId, id, date) {
 
 /**
  * Flushes a batch of buffered edits as ONE commit (see lib/outbox.js).
- * txEdits: [{ key, accountId, id, date, state }]; categories: full v2 doc or null.
+ * txEdits: [{ key, accountId, id, date, state }]; categories: full v2 doc or null; budget: full budget doc or null.
  * Per-edit problems (transaction gone) don't sink the batch: they come back in `failed`.
  */
-export async function applyEdits({ txEdits = [], categories = null }) {
+export async function applyEdits({ txEdits = [], categories = null, budget = null }) {
   if (categories) validateCategories(categories);
+  if (budget) validateBudget(budget);
   const repo = await getRepo();
   await ensureInitialized(repo);
   let out;
@@ -204,7 +212,8 @@ export async function applyEdits({ txEdits = [], categories = null }) {
       files.push({ path: "corrections.json", content: corr });
     }
     if (categories) files.push({ path: "categories.json", content: categories });
-    const parts = [out.applied.length && `${out.applied.length} transaction edit${out.applied.length === 1 ? "" : "s"}`, categories && "categories"].filter(Boolean);
+    if (budget) files.push({ path: BUDGET_FILE, content: budget });
+    const parts = [out.applied.length && `${out.applied.length} transaction edit${out.applied.length === 1 ? "" : "s"}`, categories && "categories", budget && "budget"].filter(Boolean);
     return { files, message: `Dashboard: ${parts.join(" + ") || "no changes"}` };
   });
   return out;

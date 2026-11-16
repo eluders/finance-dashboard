@@ -1,11 +1,15 @@
 // Category taxonomy: ordered groups, each with ordered categories.
-//   categories.json v2: { version: 2, groups: [{ id, name, categories: [{ id, name }] }] }
+//   categories.json v2: { version: 2, groups: [{ id, name, side?, sectionBreak?, categories: [{ id, name }] }] }
+//   side: "minimize" (default; spending) or "maximize" (income, giving, saving, investing). Categories take their group's side.
 // Category ids are stable (renames don't touch transactions). v1 (flat list with `group`) is migrated on read.
 //
 // Built-in "Archive" (id "archive"): not part of the user's groups. Archived transactions are hidden
 // from the summary and from the transaction list unless the list is filtered to Archive.
 export const ARCHIVE_ID = "archive";
 export const ARCHIVE = { id: ARCHIVE_ID, name: "Archive", groupId: ARCHIVE_ID, groupName: "Archive" };
+
+export const SIDES = ["minimize", "maximize"];
+export const sideOf = (g) => (g?.side === "maximize" ? "maximize" : "minimize");
 
 export function normalizeCategories(doc) {
   if (doc?.version === 2 && Array.isArray(doc.groups)) return doc;
@@ -26,7 +30,7 @@ export function normalizeCategories(doc) {
 /** id -> { id, name, groupId, groupName } */
 export function categoryIndex(doc) {
   const m = new Map();
-  for (const g of doc?.groups || []) for (const c of g.categories) m.set(c.id, { ...c, groupId: g.id, groupName: g.name });
+  for (const g of doc?.groups || []) for (const c of g.categories) m.set(c.id, { ...c, groupId: g.id, groupName: g.name, side: sideOf(g) });
   m.set(ARCHIVE_ID, ARCHIVE);
   return m;
 }
@@ -45,6 +49,7 @@ export function validateCategories(doc) {
   const ids = new Set();
   for (const g of doc.groups) {
     if (!g.name?.trim()) throw new Error("Every group needs a name.");
+    if (g.side != null && !SIDES.includes(g.side)) throw new Error(`Group "${g.name}" has an unknown side "${g.side}".`);
     for (const c of g.categories) {
       if (!c.name?.trim()) throw new Error(`A category in "${g.name}" has no name.`);
       if (ids.has(c.id)) throw new Error(`Duplicate category id ${c.id}.`);

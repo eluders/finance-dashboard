@@ -31,6 +31,8 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
 - **Dashboard** (web): edit categories, notes and splits.
   - Changes show instantly and are saved to GitHub as one commit about a minute later, or right away with **Save now**.
   - Drag the ☰ handles to reorder categories or move them between groups.
+  - **Minimize / Maximize** (Summary): categories are split into things to keep low (expenses) and things to grow (income, giving, saving, investing). In Edit categories, the left column is Minimize and the right is Maximize; drag groups or categories across.
+  - **Predict** (Summary): enter predicted amounts per category per month. A Monthly amount fills and locks every month; otherwise enter single months (one-offs) and the average is their total over 12. The normal view shows a **Predicted / mo** column. Predicted numbers are orange.
   - **Archive**: a built-in category for things that shouldn't count, like card payments and transfers. Archived transactions are hidden from the summary and the list unless you filter to Archive.
   - **AI categorize** (button on the Transactions tab):
     - Filter the table to what you want categorized, add notes for the session if needed, and click **Categorize**.

@@ -5,6 +5,7 @@
 // Stored under "outbox" in the given storage:
 //   { tx: { "<accountId>/<txId>": { accountId, id, date, state, rev } },
 //     categories: { doc, rev } | null,
+//     budget: { doc, rev } | null,              (budget.json, whole doc like categories)
 //     since: ms of oldest unsaved edit | null,  flushing: bool,
 //     lastFlush: { at, ok, error?, applied? } | null,
 //     failed: [{ key, error, at }] }   edits GitHub rejected (e.g. transaction no longer exists)
@@ -12,8 +13,8 @@
 // All mutations go through one promise chain, so queue/flush never interleave read-modify-writes.
 
 export const OUTBOX_KEY = "outbox";
-const EMPTY = () => ({ tx: {}, categories: null, since: null, flushing: false, lastFlush: null, failed: [] });
-export const pendingCount = (o) => Object.keys(o?.tx || {}).length + (o?.categories ? 1 : 0);
+const EMPTY = () => ({ tx: {}, categories: null, budget: null, since: null, flushing: false, lastFlush: null, failed: [] });
+export const pendingCount = (o) => Object.keys(o?.tx || {}).length + (o?.categories ? 1 : 0) + (o?.budget ? 1 : 0);
 
 export function createOutbox({ storage, alarms, applyEdits, flushMs = 60_000, now = () => Date.now() }) {
   let chain = Promise.resolve();
@@ -23,7 +24,7 @@ export function createOutbox({ storage, alarms, applyEdits, flushMs = 60_000, no
   const write = (o) => storage.set({ [OUTBOX_KEY]: o });
   const schedule = (when) => alarms?.create("flush", { when });
 
-  /** op: { type: "tx", entry: { accountId, id, date, state } } | { type: "categories", doc } */
+  /** op: { type: "tx", entry: { accountId, id, date, state } } | { type: "categories" | "budget", doc } */
   const queue = (op) => queueMany([op]);
 
   /** Several ops with one storage read/write (bulk edits stay instant). */
@@ -34,6 +35,7 @@ export function createOutbox({ storage, alarms, applyEdits, flushMs = 60_000, no
         const r = ++rev;
         if (op.type === "tx") o.tx[`${op.entry.accountId}/${op.entry.id}`] = { ...op.entry, rev: r };
         else if (op.type === "categories") o.categories = { doc: op.doc, rev: r };
+        else if (op.type === "budget") o.budget = { doc: op.doc, rev: r };
         else throw new Error(`Unknown outbox op ${op.type}`);
       }
       if (!o.since) { o.since = now(); schedule(o.since + flushMs); }
@@ -57,6 +59,7 @@ export function createOutbox({ storage, alarms, applyEdits, flushMs = 60_000, no
       result = await applyEdits({
         txEdits: Object.entries(snap.tx).map(([key, e]) => ({ key, ...e })),
         categories: snap.categories?.doc || null,
+        budget: snap.budget?.doc || null,
       });
     } catch (e) { error = e.message || String(e); }
 
@@ -70,6 +73,7 @@ export function createOutbox({ storage, alarms, applyEdits, flushMs = 60_000, no
         // drop what was saved, unless it was edited again while the commit was in flight
         for (const [key, e] of Object.entries(snap.tx)) if (o.tx[key]?.rev === e.rev) delete o.tx[key];
         if (snap.categories && o.categories?.rev === snap.categories.rev) o.categories = null;
+        if (snap.budget && o.budget?.rev === snap.budget.rev) o.budget = null;
         for (const f of result.failed) o.failed.push({ ...f, at: now() });
         o.lastFlush = { at: now(), ok: true, applied: result.applied.length };
         o.since = pendingCount(o) ? now() : null;

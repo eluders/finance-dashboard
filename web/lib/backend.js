@@ -130,6 +130,7 @@ const handlers = {
   upsertAccount: ({ account }) => store.upsertAccount(account),
   getAllTransactions: () => store.getAllTransactions(),
   getCategories: () => store.getCategories(),
+  getBudget: () => store.getBudget(),
   queueEdit: ({ op }) => getOutbox().queue(op),
   queueEdits: ({ ops }) => getOutbox().queueMany(ops),
   flushOutbox: () => getOutbox().flush(),

@@ -218,3 +218,29 @@ table.summary td.label { z-index: 1; }
 @keyframes cell-flash { from { background: #b8f0c8; } to { background: transparent; } }
 #txns td.cat-cell.flash:not(.selected) { animation: cell-flash .7s ease-out; }
 #txns td.cat-cell.flash.selected .cell-select { animation: cell-flash .7s ease-out; }
+
+/* summary: Minimize/Maximize and Actual/Predict toggles */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: #fff; padding: 6px 14px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #fff; }
+/* predicted values are dark orange everywhere */
+:root { --pred: #b4520a; }
+table.summary .pred, table.summary .pred a { color: var(--pred); }
+table.summary th.pred { color: var(--pred); border-left: 1px solid var(--line); }
+table.summary td.pred-col { border-left: 1px solid var(--line); }
+table.summary.predict td.pcell { padding: 2px 2px; }
+table.summary.predict th.label, table.summary.predict td.label { min-width: 190px; }
+table.summary.predict td.num, table.summary.predict th.num { padding-left: 6px; padding-right: 6px; }
+.pred-input { width: 62px; text-align: right; color: var(--pred); padding: 3px 5px; font-variant-numeric: tabular-nums; }
+.pred-input.monthly { width: 74px; font-weight: 600; }
+.pred-input[readonly] { background: #fbf6f1; border-color: transparent; cursor: not-allowed; }
+table.summary.predict .group-row .pred, table.summary.predict .subtotal-row .pred { font-weight: 600; }
+
+/* category editor: Minimize | Maximize columns */
+.cat-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.cat-side > h3 { margin: 4px 0 2px; }
+.cat-side .cat-groups { min-height: 90px; border-radius: 8px; }
+.cat-side .cat-groups:has(.cat-empty-side) { border: 2px dashed var(--line); display: grid; place-items: center; }
+.cat-side .cat-group-name { width: 180px; }
+@media (max-width: 1000px) { .cat-sides { grid-template-columns: 1fr; } }

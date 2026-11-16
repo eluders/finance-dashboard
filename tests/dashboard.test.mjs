@@ -51,7 +51,7 @@ const settle = async () => { for (let i = 0; i < 40; i++) await new Promise((r) 
 const fire = (node, type) => node.dispatchEvent(new window.Event(type, { bubbles: true }));
 const rowOf = (text) => $$("tr.tx").find((r) => r.textContent.includes(text));
 const onGitHub = async (text) => (await store.getAllTransactions()).find((t) => t.description.includes(text));
-const pending = () => Object.keys(outboxNow().tx || {}).length + (outboxNow().categories ? 1 : 0);
+const pending = () => Object.keys(outboxNow().tx || {}).length + (outboxNow().categories ? 1 : 0) + (outboxNow().budget ? 1 : 0);
 
 await import("../web/dashboard.js");
 await settle();
@@ -138,14 +138,14 @@ test("split with a Remaining row: only one remainder, live math, applied locally
 
 test("summary: per-category monthly sums (split parts counted separately), group + subtotal rows", async () => {
   await go("#summary");
-  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Total", "Avg / mo"], "only months with data");
-  assert.deepEqual(sumCells("Subscriptions"), ["$13", "$13", "$13"]);
-  assert.deepEqual(sumCells("Groceries"), ["$60", "$60", "$60"]);
-  assert.deepEqual(sumCells("Health & Medical"), ["$13", "$13", "$13"]); // the $12.50 split part
+  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Total", "Avg / mo", "Predicted / mo"], "only months with data");
+  assert.deepEqual(sumCells("Subscriptions"), ["$13", "$13", "$13", ""]);
+  assert.deepEqual(sumCells("Groceries"), ["$60", "$60", "$60", ""]);
+  assert.deepEqual(sumCells("Health & Medical"), ["$13", "$13", "$13", ""]); // the $12.50 split part
   assert.equal(sumRow("Food").classList.contains("group-row"), true);
-  assert.deepEqual(sumCells("Food"), ["$60", "$60", "$60"]);
-  assert.deepEqual(sumCells("Subtotal"), ["$85", "$85", "$85"]); // 12.99 + 12.50 + 60 = 85.49
-  assert.deepEqual(sumCells("Uncategorized"), ["$8", "$8", "$8"]); // the $7.50 remainder has no category
+  assert.deepEqual(sumCells("Food"), ["$60", "$60", "$60", ""]);
+  assert.deepEqual(sumCells("Subtotal"), ["$85", "$85", "$85", ""]); // 12.99 + 12.50 + 60 = 85.49
+  assert.deepEqual(sumCells("Uncategorized"), ["$8", "$8", "$8", ""]); // the $7.50 remainder has no category
   assert.equal(sumCells("Travel").join(""), "", "unused categories are listed, blank");
 });
 
@@ -528,6 +528,106 @@ test("Category column: blank strip + drag select; instant Ctrl+C / Ctrl+V with n
   await settle();
   const states = Object.values(outboxNow().tx).map((e) => e.state.category);
   assert.ok(states.filter((c) => c === "subscriptions").length >= 2);
+});
+
+test("Minimize/Maximize: editor columns with cross-side drag; summary toggle; Predict grid with monthly lock + one-offs", async () => {
+  await go("#summary");
+  if ($$("#sumMode button.on")[0]?.dataset.v !== "actual") button("#sumMode", "Actual").click();
+  $("#editCategories").click();
+  assert.equal($("#sumSide").hidden, true, "toggles hidden while editing");
+  const col = (side) => $(`#summaryBody .cat-groups[data-side=${side}]`);
+  assert.equal(col("maximize").querySelectorAll(".cat-group").length, 0);
+  assert.match(col("maximize").textContent, /Drag groups here/);
+  const groupWith = (catName) => $$("#summaryBody .cat-group").find((g) => [...g.querySelectorAll(".cat-row input")].some((i) => i.value === catName));
+  const travelGroup = groupWith("Travel");
+  const travelGroupName = travelGroup.querySelector(".cat-group-name").value;
+
+  // drag the Travel group into the (empty) Maximize column, then drag Groceries into it too
+  dragTo(travelGroup.querySelector(":scope > .row .drag-handle"), col("maximize"), 1);
+  assert.equal(col("maximize").querySelectorAll(".cat-group").length, 1);
+  const groceries = $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === "Groceries");
+  dragTo(groceries.querySelector(".drag-handle"), col("maximize").querySelector(".cat-list"), 1);
+  assert.equal(groupWith("Groceries"), groupWith("Travel"), "a category crosses sides into a group there");
+  // and back: a category can cross from Maximize into a Minimize group
+  const g2 = $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === "Groceries");
+  dragTo(g2.querySelector(".drag-handle"), col("minimize").querySelector(".cat-group .cat-list"), -1);
+  assert.ok(col("minimize").contains(groupWith("Groceries")));
+  const g3 = $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === "Groceries");
+  dragTo(g3.querySelector(".drag-handle"), col("maximize").querySelector(".cat-list"), 1);
+  button("#summaryBody", "Save categories").click();
+
+  // summary: Minimize shows everything but that group; Maximize shows only it
+  assert.equal($("#sumSide").hidden, false);
+  assert.equal(sumRow(travelGroupName), undefined, "on Minimize by default");
+  button("#sumSide", "Maximize").click();
+  assert.ok($("#sumSide button.on").textContent === "Maximize");
+  assert.ok(sumRow(travelGroupName) && sumRow("Groceries"), "the Maximize side");
+  assert.equal(sumRow("Subscriptions"), undefined);
+  assert.equal(sumRow("Uncategorized"), undefined, "Uncategorized is a Minimize row");
+  assert.ok(!sumRow("Groceries").children[1].classList.contains("good"), "Maximize shows sizes, not green 'money in'");
+
+  // Predict: Monthly fills and locks all 12 months
+  button("#sumMode", "Predict").click();
+  assert.ok($("#summaryBody table.predict"));
+  assert.equal($("#sumAccount").hidden, true, "predictions aren't per account");
+  const year = $("#sumYear").value;
+  const inputsOf = (label) => [...sumRow(label).querySelectorAll("input")];
+  const [monthly, ...months] = inputsOf("Travel");
+  assert.equal(months.length, 12);
+  monthly.value = "100"; fire(monthly, "change");
+  assert.ok(months.every((i) => i.value === "100" && i.readOnly), "filled and locked");
+  const tds = (label) => [...sumRow(label).children].map((td) => td.textContent);
+  assert.deepEqual(tds("Travel").slice(-2), ["$1,200", "$100"]);
+  months[5].value = "5"; fire(months[5], "change");
+  assert.equal(months[5].value, "100", "locked months can't be changed");
+
+  // single months: a one-off spreads over the year
+  const g = inputsOf("Groceries");
+  g[6].value = "1,200"; fire(g[6], "change");
+  g[7].value = "240.50"; fire(g[7], "change");
+  assert.deepEqual(tds("Groceries").slice(-2), ["$1,441", "$120"]);
+  assert.equal(g[1].readOnly, false);
+  assert.deepEqual(tds(travelGroupName).slice(-2), ["$2,641", "$220"], "group row sums its categories");
+  assert.ok(sumRow("Groceries").querySelector("td.pred") && $("#summaryBody .pred-input"), "predicted values use the orange class");
+  g[8].value = "abc"; fire(g[8], "change");
+  assert.equal(g[8].value, "", "bad input is put back");
+  assert.match($("#status").textContent, /isn't an amount/);
+
+  // clearing Monthly keeps the filled months, now editable
+  monthly.value = ""; fire(monthly, "change");
+  assert.ok(months.every((i) => i.value === "100" && !i.readOnly));
+  months[0].value = "400"; fire(months[0], "change");
+  assert.deepEqual(tds("Travel").slice(-2), ["$1,500", "$125"]);
+
+  // Actual: a Predicted / mo column on the right, in orange
+  button("#sumMode", "Actual").click();
+  const last = sumRow("Groceries").lastElementChild;
+  assert.equal(last.textContent, "$120");
+  assert.ok(last.classList.contains("pred"));
+  assert.equal(sumRow(travelGroupName).lastElementChild.textContent, "$245");
+
+  // saved with everything else: one commit with budget.json
+  await settle();
+  assert.ok(outboxNow().budget, "buffered in the outbox");
+  $("#saveNow").click();
+  await settle();
+  assert.match(gh.log()[0], /categories \+ budget/);
+  const saved = JSON.parse(gh.files().get("budget.json"));
+  assert.deepEqual(saved.years[year].travel, { months: [40000, ...Array(11).fill(10000)] });
+  assert.deepEqual(saved.years[year].groceries.months.slice(5, 7), [120000, 24050]);
+  const savedCats = await store.getCategories();
+  assert.equal(savedCats.groups.find((x) => x.name === travelGroupName).side, "maximize");
+
+  // reload: budget comes back from GitHub
+  $("#reload").click();
+  await settle();
+  assert.equal(sumRow("Groceries").lastElementChild.textContent, "$120");
+  button("#sumMode", "Predict").click();
+  const gm = sumRow("Groceries").querySelector("input");
+  gm.value = "50"; fire(gm, "change"); // left unsaved for the export test
+  button("#sumMode", "Actual").click();
+  assert.equal(sumRow("Groceries").lastElementChild.textContent, "$50");
+  button("#sumSide", "Minimize").click();
 });
 
 test("Settings → Export all data: a zip of every data-repo file + browser state, saved first, no secrets", async () => {

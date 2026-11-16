@@ -1,9 +1,10 @@
 // Web dashboard (served by GitHub Pages). Reads/writes the private data repo directly with the
 // token saved in Settings. The shared data code lives in ../extension/src/lib/.
-// Tabs: #summary (spending per category per month + category editor), #transactions, #settings.
+// Tabs: #summary (per category per month, Minimize/Maximize × Actual/Predict, + category editor), #transactions, #settings.
 import { fmtMoney, fmtDate, el, accountBadge, accountColor } from "../extension/src/lib/ui.js";
 import { resolveSplits, parseMoneyInput } from "../extension/src/lib/splits.js";
-import { categoryIndex, uniqueId, validateCategories, ARCHIVE_ID } from "../extension/src/lib/categories.js";
+import { categoryIndex, uniqueId, validateCategories, ARCHIVE_ID, sideOf } from "../extension/src/lib/categories.js";
+import { emptyBudget, budgetEntry, entryMonths, entryAvg, setMonthly, setMonth } from "../extension/src/lib/budget.js";
 import { applyState, editableState, trackedCents } from "../extension/src/lib/edits.js";
 import { onStorageChanged } from "../extension/src/lib/platform.js";
 import { OUTBOX_KEY, pendingCount } from "./lib/outbox.js";
@@ -15,6 +16,7 @@ import { catPicker, pickerIds, describeSelection, UNCAT } from "./cat-picker.js"
 
 const $ = (id) => document.getElementById(id);
 let accounts = [], txns = [], cats = { version: 2, groups: [] }, catIdx = new Map(), catOptionsHtml = "";
+let budget = emptyBudget(); // predicted amounts (budget.json)
 let loaded = false;
 const expanded = new Set();
 const rowEls = new Map(); // txn id -> <tr>
@@ -43,6 +45,17 @@ initCellSelect({
   isActive: () => tab === "transactions" && !review(),
   setCategories: (items) => { const n = setTxCategories(items); for (const { t } of items) refreshRow(t); return n; },
 });
+
+// ---------- summary view: Minimize/Maximize × Actual/Predict (remembered in this browser) ----------
+const VIEW_KEY = "fd:summaryView";
+const view = (() => { try { return { side: "minimize", mode: "actual", ...JSON.parse(localStorage.getItem(VIEW_KEY) || "{}") }; } catch (_) { return { side: "minimize", mode: "actual" }; } })();
+function setView(patch) {
+  Object.assign(view, patch);
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {}
+  renderSummary();
+}
+for (const id of ["sumSide", "sumMode"]) for (const b of $(id).querySelectorAll("button")) b.onclick = () => setView({ [id === "sumSide" ? "side" : "mode"]: b.dataset.v });
+
 
 // ---------- tabs ----------
 const TABS = ["summary", "transactions", "logs", "settings"];
@@ -82,9 +95,9 @@ async function load() {
   let st;
   try {
     st = await call("getStatus");
-    [accounts, txns, cats] = st.initialized
-      ? await Promise.all([call("listAccounts"), call("getAllTransactions"), call("getCategories")])
-      : [[], [], st.configured ? await call("getCategories") : cats];
+    [accounts, txns, cats, budget] = st.initialized
+      ? await Promise.all([call("listAccounts"), call("getAllTransactions"), call("getCategories"), call("getBudget")])
+      : [[], [], st.configured ? await call("getCategories") : cats, emptyBudget()];
   } catch (e) {
     setStatus(`Couldn't load from GitHub: ${e.message}`, "bad");
     return;
@@ -97,6 +110,7 @@ async function load() {
     if (t) try { applyState(t, e.state, undefined, { lenient: true }); } catch (_) { /* flagged on flush */ }
   }
   if (outboxState.categories) cats = outboxState.categories.doc;
+  if (outboxState.budget) budget = outboxState.budget.doc;
   renderSaveState();
   setCategories(cats);
   loaded = true;
@@ -108,12 +122,7 @@ async function load() {
 
   fillAccountSelect($("filterAccount"));
   fillAccountSelect($("sumAccount"));
-  const years = [...new Set(txns.map((t) => t.date.slice(0, 4)))].sort().reverse();
-  const ys = $("sumYear");
-  const keepYear = ys.value;
-  ys.innerHTML = "";
-  for (const y of years.length ? years : [String(new Date().getFullYear())]) ys.append(new Option(y, y));
-  if ([...ys.options].some((o) => o.value === keepYear)) ys.value = keepYear;
+  fillYearSelect();
   renderTab();
 }
 
@@ -211,12 +220,16 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 // ---------- summary tab ----------
+// Two halves of the category list: Minimize (spending) and Maximize (income, giving, saving,
+// investing), each viewed as Actual (from transactions, plus a predicted avg/mo column) or Predict
+// (a grid of predicted amounts per month; see lib/budget.js).
 /** Groups split into sections at each `sectionBreak` group (e.g. spending | investments | not counted). */
 function sections(groups) {
   const out = [];
   for (const g of groups) { if (!out.length || g.sectionBreak) out.push([]); out.at(-1).push(g); }
   return out;
 }
+const sideGroups = (side) => cats.groups.filter((g) => sideOf(g) === side);
 
 /** Net outflow in cents per category per month: Map(categoryId | UNCAT -> number[12]). Splits count per part. */
 function monthlyTotals(year, accountId) {
@@ -239,60 +252,192 @@ function monthlyTotals(year, accountId) {
 }
 
 const sumArr = (arrs) => arrs.reduce((acc, a) => (a ? acc.map((v, i) => v + a[i]) : acc), Array(12).fill(0));
+const dollars = (cents) => "$" + Math.round(Math.abs(cents) / 100).toLocaleString("en-US");
 /** Whole dollars; money that came in (negative spending) shows green. */
 function moneyCell(cents, attrs = {}) {
   const td = el("td", { class: `num${cents < 0 ? " good" : ""}${attrs.class ? ` ${attrs.class}` : ""}` });
   if (cents) {
-    td.textContent = "$" + Math.round(Math.abs(cents) / 100).toLocaleString("en-US");
-    td.title = `${cents < 0 ? "net money in " : ""}${fmtMoney(Math.abs(cents))}`;
+    td.textContent = dollars(cents);
+    td.title = attrs.title || `${cents < 0 ? "net money in " : ""}${fmtMoney(Math.abs(cents))}`;
   }
   if (attrs.onclick) { td.classList.add("link"); td.onclick = attrs.onclick; }
   return td;
 }
 
+function fillYearSelect() {
+  const ys = $("sumYear");
+  const keep = ys.value;
+  const now = new Date().getFullYear();
+  const years = [...new Set([...txns.map((t) => t.date.slice(0, 4)), String(now), String(now + 1), ...Object.keys(budget.years)])].sort().reverse();
+  ys.innerHTML = "";
+  for (const y of years) ys.append(new Option(y, y));
+  ys.value = years.includes(keep) ? keep : String(now);
+}
+
 function renderSummary() {
+  for (const id of ["sumSide", "sumMode"]) {
+    $(id).hidden = editingCategories;
+    for (const b of $(id).querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === view[id === "sumSide" ? "side" : "mode"]);
+  }
+  $("sumAccount").hidden = editingCategories || view.mode === "predict"; // predictions aren't per account
   $("editCategories").hidden = editingCategories;
   const body = $("summaryBody");
   if (editingCategories) { drawCategoryEditor(); return; }
   body.innerHTML = "";
   if (!loaded) return;
+  if (view.mode === "predict") renderPredict(body);
+  else renderActual(body);
+}
+
+function renderActual(body) {
   const year = $("sumYear").value;
   const acct = $("sumAccount").value;
+  const max = view.side === "maximize";
   const { sums, months } = monthlyTotals(year, acct);
-  if (!months.length) { body.append(el("div", { class: "card muted" }, `No transactions in ${year}.`)); return; }
+  if (!months.length) { body.append(el("div", { class: "card muted" }, `No transactions in ${year}. Switch to Predict to plan it.`)); return; }
   const cols = [];
   for (let m = months[0]; m <= months.at(-1); m++) cols.push(m);
   const avgDiv = cols.length;
   const goto = (category, m) => () => openTransactions({ category, date: m == null ? year : `${year}-${String(m + 1).padStart(2, "0")}`, account: acct });
+  // Maximize shows the size of each category's flow: income in and giving/investing out both count up.
+  const catArr = (id) => { const a = sums.get(id); return a ? (max ? a.map(Math.abs) : a) : Array(12).fill(0); };
+  const predOf = (ids) => ids.reduce((s, id) => s + (entryAvg(budgetEntry(budget, year, id)) || 0), 0);
 
-  const line = (label, arr, { cls = "", category = null, labelCls = "" } = {}) => {
+  const line = (label, arr, { cls = "", category = null, pred = null } = {}) => {
     const total = arr.reduce((a, b) => a + b, 0);
     return el("tr", { class: cls },
-      el("td", { class: `label ${labelCls}` }, category ? Object.assign(el("a", { href: "#transactions" }, label), { onclick: (e) => { e.preventDefault(); goto(category, null)(); } }) : label),
+      el("td", { class: "label" }, category ? Object.assign(el("a", { href: "#transactions" }, label), { onclick: (e) => { e.preventDefault(); goto(category, null)(); } }) : label),
       cols.map((m) => moneyCell(arr[m], category ? { onclick: goto(category, m) } : {})),
       moneyCell(total, { class: "total" }),
-      moneyCell(Math.round(total / avgDiv), { class: "avg" }));
+      moneyCell(Math.round(total / avgDiv), { class: "avg" }),
+      pred == null ? el("td", { class: "pred-col" }) : moneyCell(pred, { class: "pred pred-col", title: `Predicted ${fmtMoney(pred)} a month` }));
   };
 
   const tbody = el("tbody");
-  sections(cats.groups).forEach((sec, si) => {
-    if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: cols.length + 3 })));
+  const width = cols.length + 4;
+  sections(sideGroups(view.side)).forEach((sec, si) => {
+    if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
     for (const g of sec) {
-      const groupArr = sumArr(g.categories.map((c) => sums.get(c.id)));
-      tbody.append(line(g.name, groupArr, { cls: "group-row", category: `g:${g.id}` }));
-      for (const c of g.categories) tbody.append(line(c.name, sums.get(c.id) || Array(12).fill(0), { cls: "cat-line", category: c.id }));
+      const ids = g.categories.map((c) => c.id);
+      tbody.append(line(g.name, sumArr(ids.map(catArr)), { cls: "group-row", category: `g:${g.id}`, pred: predOf(ids) }));
+      for (const c of g.categories) tbody.append(line(c.name, catArr(c.id), { cls: "cat-line", category: c.id, pred: predOf([c.id]) }));
     }
-    const secArr = sumArr(sec.flatMap((g) => g.categories.map((c) => sums.get(c.id))));
-    tbody.append(line("Subtotal", secArr, { cls: "subtotal-row" }));
+    const ids = sec.flatMap((g) => g.categories.map((c) => c.id));
+    tbody.append(line("Subtotal", sumArr(ids.map(catArr)), { cls: "subtotal-row", pred: predOf(ids) }));
   });
-  if (sums.has(UNCAT)) {
-    tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: cols.length + 3 })));
+  if (!tbody.children.length) tbody.append(el("tr", {}, el("td", { colspan: width, class: "muted" }, `No ${view.side} groups yet. Use Edit categories to drag groups to this side.`)));
+  if (!max && sums.has(UNCAT)) {
+    tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
     tbody.append(line("Uncategorized", sums.get(UNCAT), { cls: "uncat-row", category: UNCAT }));
   }
 
   body.append(el("div", { class: "card table-card summary-card" }, el("table", { class: "summary" },
-    el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), cols.map((m) => el("th", { class: "num" }, MONTHS[m])), el("th", { class: "num total" }, "Total"), el("th", { class: "num avg", title: `Average over ${avgDiv} month${avgDiv === 1 ? "" : "s"}` }, "Avg / mo"))),
+    el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), cols.map((m) => el("th", { class: "num" }, MONTHS[m])),
+      el("th", { class: "num total" }, "Total"),
+      el("th", { class: "num avg", title: `Average over ${avgDiv} month${avgDiv === 1 ? "" : "s"}` }, "Avg / mo"),
+      el("th", { class: "num pred", title: "Predicted average per month (from Predict)" }, "Predicted / mo"))),
     tbody)));
+}
+
+// Predict: every category × 12 months. A Monthly amount fills and locks all 12; otherwise each month
+// is entered on its own and the average is their sum / 12.
+const centsText = (c) => (c == null ? "" : c % 100 ? (c / 100).toFixed(2) : String(c / 100));
+function renderPredict(body) {
+  const year = $("sumYear").value;
+  const catRows = []; // { id, monthly, months: [input×12], total, avg }
+  const aggRows = []; // { ids, months: [td×12], total, avg }
+  const setTd = (td, cents) => { td.textContent = cents ? dollars(cents) : ""; };
+
+  const refresh = () => {
+    for (const r of catRows) {
+      const e = budgetEntry(budget, year, r.id);
+      const vals = entryMonths(e);
+      const locked = e?.monthly != null;
+      if (document.activeElement !== r.monthly) r.monthly.value = centsText(e?.monthly ?? null);
+      r.months.forEach((inp, m) => {
+        inp.readOnly = locked;
+        inp.title = locked ? "Set by the Monthly amount. Clear Monthly to edit single months." : `${MONTHS[m]} ${year}`;
+        if (document.activeElement !== inp || locked) inp.value = centsText(vals[m]);
+      });
+      setTd(r.total, vals.reduce((a, v) => a + (v || 0), 0));
+      setTd(r.avg, entryAvg(e) || 0);
+    }
+    for (const r of aggRows) {
+      const per = r.ids.map((id) => entryMonths(budgetEntry(budget, year, id)));
+      r.months.forEach((td, m) => setTd(td, per.reduce((a, v) => a + (v[m] || 0), 0)));
+      setTd(r.total, per.reduce((a, v) => a + v.reduce((x, y) => x + (y || 0), 0), 0));
+      setTd(r.avg, r.ids.reduce((a, id) => a + (entryAvg(budgetEntry(budget, year, id)) || 0), 0));
+    }
+  };
+  const commit = (next) => {
+    if (JSON.stringify(next) === JSON.stringify(budget)) { refresh(); return; }
+    budget = next;
+    queueOp({ type: "budget", doc: budget });
+    refresh();
+  };
+  /** Parses an input; blank = clear. Bad input is put back and reported. */
+  const read = (inp, prev) => {
+    const raw = inp.value.trim();
+    if (!raw) return { ok: true, cents: null };
+    const cents = parseMoneyInput(raw);
+    if (cents == null) { setStatus(`"${raw}" isn't an amount. Use numbers like 120 or 45.50.`, "bad"); inp.value = centsText(prev); return { ok: false }; }
+    setStatus("");
+    return { ok: true, cents };
+  };
+  // Enter moves down a row in the same column, like a spreadsheet
+  const onKey = (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const inputs = [...body.querySelectorAll(`input[data-col="${e.target.dataset.col}"]`)];
+    const next = inputs[inputs.indexOf(e.target) + (e.shiftKey ? -1 : 1)];
+    if (next) { next.focus(); next.select(); } else e.target.blur();
+  };
+
+  const catLine = (c) => {
+    const monthly = el("input", { class: "pred-input monthly", inputmode: "decimal", placeholder: "—", "data-col": "monthly", "aria-label": `${c.name} monthly` });
+    monthly.onchange = () => {
+      const r = read(monthly, budgetEntry(budget, year, c.id)?.monthly ?? null);
+      if (r.ok) commit(setMonthly(budget, year, c.id, r.cents));
+    };
+    const months = MONTHS.map((name, m) => {
+      const inp = el("input", { class: "pred-input", inputmode: "decimal", "data-col": String(m), "aria-label": `${c.name} ${name}` });
+      inp.onchange = () => {
+        if (inp.readOnly) { refresh(); return; }
+        const r = read(inp, entryMonths(budgetEntry(budget, year, c.id))[m]);
+        if (r.ok) commit(setMonth(budget, year, c.id, m, r.cents));
+      };
+      return inp;
+    });
+    for (const i of [monthly, ...months]) i.addEventListener("keydown", onKey);
+    const row = { id: c.id, monthly, months, total: el("td", { class: "num pred total" }), avg: el("td", { class: "num pred pred-col" }) };
+    catRows.push(row);
+    return el("tr", { class: "cat-line" }, el("td", { class: "label" }, c.name), el("td", { class: "pcell" }, monthly),
+      months.map((i) => el("td", { class: "pcell" }, i)), row.total, row.avg);
+  };
+  const aggLine = (label, ids, cls) => {
+    const row = { ids, months: MONTHS.map(() => el("td", { class: "num pred" })), total: el("td", { class: "num pred total" }), avg: el("td", { class: "num pred pred-col" }) };
+    aggRows.push(row);
+    return el("tr", { class: cls }, el("td", { class: "label" }, label), el("td"), row.months, row.total, row.avg);
+  };
+
+  const tbody = el("tbody");
+  sections(sideGroups(view.side)).forEach((sec, si) => {
+    if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: 16 })));
+    for (const g of sec) {
+      tbody.append(aggLine(g.name, g.categories.map((c) => c.id), "group-row"));
+      for (const c of g.categories) tbody.append(catLine(c));
+    }
+    tbody.append(aggLine("Subtotal", sec.flatMap((g) => g.categories.map((c) => c.id)), "subtotal-row"));
+  });
+  if (!tbody.children.length) tbody.append(el("tr", {}, el("td", { colspan: 16, class: "muted" }, `No ${view.side} groups yet. Use Edit categories to drag groups to this side.`)));
+
+  body.append(
+    el("div", { class: "muted", style: "margin:-4px 0 8px" }, `Predicted amounts for ${year}. A Monthly amount fills every month. Leave it blank to enter single months instead (one-offs); the average is their total over 12 months.`),
+    el("div", { class: "card table-card summary-card" }, el("table", { class: "summary predict" },
+      el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), el("th", { class: "num pred" }, "Monthly"),
+        MONTHS.map((m) => el("th", { class: "num" }, m)), el("th", { class: "num total" }, "Total"), el("th", { class: "num pred" }, "Avg / mo"))),
+      tbody)));
+  refresh();
 }
 
 // ---------- transactions tab ----------
@@ -714,14 +859,21 @@ function dropInto(container, selector, e) {
 }
 
 function syncDraftFromDom() {
-  const groupEls = [...$("summaryBody").querySelectorAll(".cat-groups > .cat-group")];
-  draft.groups = groupEls.map((gEl) => {
-    const g = groupOf.get(gEl);
-    g.categories = [...gEl.querySelectorAll(".cat-row")].map((r) => catOf.get(r));
-    return g;
-  });
+  // the left column is Minimize and the right is Maximize; a group's side is the column it's in
+  draft.groups = [...$("summaryBody").querySelectorAll(".cat-groups")].flatMap((col) =>
+    [...col.querySelectorAll(":scope > .cat-group")].map((gEl) => {
+      const g = groupOf.get(gEl);
+      g.categories = [...gEl.querySelectorAll(".cat-row")].map((r) => catOf.get(r));
+      if (col.dataset.side === "maximize") g.side = "maximize"; else delete g.side;
+      return g;
+    }));
   drawCategoryEditor();
 }
+
+const SIDE_INFO = {
+  minimize: ["Minimize", "Expenses: spending you want to keep low."],
+  maximize: ["Maximize", "Income, giving, saving and investing: what you want to grow."],
+};
 
 function drawCategoryEditor() {
   const box = $("summaryBody");
@@ -731,7 +883,7 @@ function drawCategoryEditor() {
   const dirty = () => JSON.stringify(draft) !== JSON.stringify(cats);
   const markDirty = () => { $("catDirty").textContent = dirty() ? "Unsaved changes" : ""; };
 
-  const groupsEl = el("div", { class: "cat-groups" }, draft.groups.map((g, gi) => {
+  const groupEl = (g, gi) => {
     const gname = el("input", { class: "cat-group-name", value: g.name });
     gname.oninput = () => { g.name = gname.value; markDirty(); };
     const addCat = el("button", {}, "+ Category");
@@ -739,10 +891,10 @@ function drawCategoryEditor() {
     const brk = el("button", { class: `icon break-toggle${g.sectionBreak ? " on" : ""}`, title: "Start a new section (with its own total) at this group", disabled: gi === 0 }, "Section break");
     brk.onclick = () => { if (g.sectionBreak) delete g.sectionBreak; else g.sectionBreak = true; drawCategoryEditor(); };
     const delGroup = el("button", { class: "icon", title: g.categories.length ? "Move or delete its categories first" : "Delete group", disabled: g.categories.length > 0 }, "✕");
-    delGroup.onclick = () => { draft.groups.splice(gi, 1); drawCategoryEditor(); };
+    delGroup.onclick = () => { draft.groups.splice(draft.groups.indexOf(g), 1); drawCategoryEditor(); };
 
     const list = el("div", { class: "cat-list" }, g.categories.map((c, ci) => {
-      const name = el("input", { value: c.name, size: 30 });
+      const name = el("input", { value: c.name, size: 26 });
       name.oninput = () => {
         c.name = name.value;
         // brand-new categories take their id from the first real name
@@ -759,17 +911,33 @@ function drawCategoryEditor() {
     }));
     if (!g.categories.length) list.append(el("div", { class: "muted cat-empty" }, "Drag categories here"));
 
-    const groupEl = el("div", { class: `cat-group${g.sectionBreak && gi > 0 ? " section-start" : ""}` });
-    groupEl.append(el("div", { class: "row" }, dragHandle(groupEl, "group"), gname, addCat, brk, delGroup), list);
-    groupOf.set(groupEl, g);
-    // a category dragged anywhere over a group (even an empty one) lands in that group's list
-    groupEl.addEventListener("dragover", (e) => { if (drag?.kind === "cat") { list.querySelector(".cat-empty")?.remove(); dropInto(list, ".cat-row", e); } });
-    return groupEl;
-  }));
-  groupsEl.addEventListener("dragover", (e) => { if (drag?.kind === "group") dropInto(groupsEl, ".cat-group", e); });
+    const gEl = el("div", { class: `cat-group${g.sectionBreak && gi > 0 ? " section-start" : ""}` });
+    gEl.append(el("div", { class: "row" }, dragHandle(gEl, "group"), gname, addCat, brk, delGroup), list);
+    groupOf.set(gEl, g);
+    // a category dragged anywhere over a group (even an empty one, on either side) lands in that group's list
+    gEl.addEventListener("dragover", (e) => { if (drag?.kind === "cat") { list.querySelector(".cat-empty")?.remove(); dropInto(list, ".cat-row", e); } });
+    return gEl;
+  };
 
-  const addGroup = el("button", {}, "+ Group");
-  addGroup.onclick = () => { draft.groups.push({ id: uniqueId("group", draft.groups.map((g) => g.id)), name: "New group", categories: [] }); drawCategoryEditor(); };
+  const sideCol = (side) => {
+    const groups = draft.groups.filter((g) => sideOf(g) === side);
+    const col = el("div", { class: "cat-groups", "data-side": side }, groups.map(groupEl));
+    if (!groups.length) col.append(el("div", { class: "muted cat-empty-side" }, "Drag groups here"));
+    col.addEventListener("dragover", (e) => {
+      if (drag?.kind !== "group") return;
+      col.querySelector(".cat-empty-side")?.remove();
+      dropInto(col, ".cat-group", e);
+    });
+    const addGroup = el("button", {}, "+ Group");
+    addGroup.onclick = () => {
+      draft.groups.push({ id: uniqueId("group", draft.groups.map((g) => g.id)), name: "New group", ...(side === "maximize" ? { side } : {}), categories: [] });
+      drawCategoryEditor();
+    };
+    const [title, hint] = SIDE_INFO[side];
+    return el("div", { class: "cat-side", "data-side": side }, el("h3", {}, title), el("div", { class: "muted", style: "margin-bottom:4px" }, hint), col,
+      el("div", { class: "row", style: "margin-top:8px" }, addGroup));
+  };
+
   const onSave = () => {
     try { validateCategories(draft); } catch (e) { setStatus(e.message, "bad"); return; }
     if (dirty()) {
@@ -787,10 +955,10 @@ function drawCategoryEditor() {
 
   box.append(el("div", { class: "card" },
     el("div", { class: "row", style: "justify-content:space-between" }, el("h2", { style: "margin:0" }, "Edit categories"), el("span", { id: "catDirty", class: "warn" }, dirty() ? "Unsaved changes" : "")),
-    el("div", { class: "muted", style: "margin:4px 0 8px" }, "Drag ☰ to reorder groups and categories, or to move a category into another group. This order is used in the summary and the dropdowns. Renaming keeps existing transactions linked. \"Section break\" starts a new block with its own total (e.g. investments)."),
-    el("div", { class: "row", style: "margin-bottom:6px" }, actions()),
-    groupsEl,
-    el("div", { class: "row", style: "margin-top:10px" }, addGroup, actions()),
+    el("div", { class: "muted", style: "margin:4px 0 8px" }, "Drag ☰ to reorder groups and categories, to move a category into another group, or to move either one to the other side. This order is used in the summary and the dropdowns. Renaming keeps existing transactions linked. \"Section break\" starts a new block with its own total."),
+    el("div", { class: "row", style: "margin-bottom:10px" }, actions()),
+    el("div", { class: "cat-sides" }, sideCol("minimize"), sideCol("maximize")),
+    el("div", { class: "row", style: "margin-top:12px" }, actions()),
   ));
 }
 
