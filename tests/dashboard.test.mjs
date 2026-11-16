@@ -859,3 +859,28 @@ test("category notes: the note icon at the left of a category row opens a note; 
   await settle();
   assert.equal(outboxNow().categories.doc.groups.flatMap((g) => g.categories).find((c) => c.id === "groceries").note, undefined);
 });
+
+test("Show predicted: view-only predicted amounts under every category's actual; Predictions stays the edit mode", async () => {
+  await go("#summary");
+  if ($("#sumPred").classList.contains("on")) $("#sumPred").click();
+  const groceries = () => sumRow("Groceries");
+  assert.equal(groceries().querySelector(".agg-pred"), null, "regular view: categories show just the actual");
+
+  $("#sumInline").click();
+  assert.ok($("#sumInline").classList.contains("on") && !$("#sumPred").classList.contains("on"));
+  const preds = [...groceries().querySelectorAll(".agg-pred")];
+  assert.equal(preds.length, 13, "a predicted line in every month cell and under Total");
+  assert.ok(groceries().classList.contains("has-agg"));
+  assert.equal($$("#summaryBody input.pred-input").length, 0, "view only: no entry boxes");
+  assert.equal($$("#summaryBody tr.pred-row").length, 0);
+
+  // Predictions enters the edit mode (and leaves Show predicted)
+  $("#sumPred").click();
+  assert.ok($("#sumPred").classList.contains("on") && !$("#sumInline").classList.contains("on"));
+  assert.ok($$("#summaryBody input.pred-input").length > 0);
+  assert.equal(groceries().querySelector(".agg-pred"), null, "the entry row shows them instead");
+  assert.equal(JSON.parse(localStorage.getItem("fd:summaryView")).inline, false, "remembered");
+  $("#sumInline").click();
+  assert.equal(JSON.parse(localStorage.getItem("fd:summaryView")).inline, true);
+  $("#sumInline").click();
+});

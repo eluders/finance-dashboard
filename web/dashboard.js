@@ -51,9 +51,14 @@ initCellSelect({
 
 // ---------- summary view: prediction rows shown or hidden (remembered in this browser) ----------
 const VIEW_KEY = "fd:summaryView";
-const view = (() => { try { return { predict: JSON.parse(localStorage.getItem(VIEW_KEY) || "{}").predict !== false }; } catch (_) { return { predict: true }; } })();
+// predict: the editable prediction rows (Predictions). inline: each category's predicted amounts, view only,
+// small under the actual ones (Show predicted; group rows always show theirs).
+const view = (() => {
+  try { const v = JSON.parse(localStorage.getItem(VIEW_KEY) || "{}"); return { predict: v.predict !== false, inline: v.inline === true }; }
+  catch (_) { return { predict: true, inline: false }; }
+})();
 function setView(patch) {
-  const anchor = "predict" in patch && patch.predict !== view.predict ? summaryAnchor() : null;
+  const anchor = Object.keys(patch).some((k) => patch[k] !== view[k]) ? summaryAnchor() : null;
   Object.assign(view, patch);
   try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {}
   renderSummary();
@@ -77,7 +82,9 @@ function restoreSummaryAnchor(a) {
   if (!head || !row) return;
   window.scrollBy(0, row.getBoundingClientRect().top - head.getBoundingClientRect().bottom - a.off);
 }
-$("sumPred").onclick = () => setView({ predict: !view.predict });
+// three views: regular, Show predicted (view only), Predictions (edit); turning one on turns the other off
+$("sumPred").onclick = () => setView(view.predict ? { predict: false } : { predict: true, inline: false });
+$("sumInline").onclick = () => setView(view.inline ? { inline: false } : { inline: true, predict: false });
 
 
 // ---------- tabs ----------
@@ -328,6 +335,9 @@ function renderSummary() {
   $("sumPred").hidden = editingCategories;
   $("sumPred").classList.toggle("on", view.predict);
   $("sumPred").setAttribute("aria-pressed", String(view.predict));
+  $("sumInline").hidden = editingCategories;
+  $("sumInline").classList.toggle("on", view.inline);
+  $("sumInline").setAttribute("aria-pressed", String(view.inline));
   $("sumAccount").hidden = editingCategories;
   $("editCategories").hidden = editingCategories;
   const body = $("summaryBody");
@@ -437,7 +447,8 @@ function renderTable(body) {
   /**
    * An actual row: 12 months, Total, Avg / mo, Predicted / mo (and an empty Monthly cell).
    * offAt(m): month m is archived (grayed). strayAt(m): money sits in an archived category that month (red).
-   * aggCs: a group header, which also shows the predicted sums of these categories.
+   * aggCs: also show the predicted sums of these categories, small under the actual amounts
+   *        (group headers always; category rows with Show predicted).
    */
   const line = (label, arr, { cls = "", category = null, predCs = null, offAt = () => false, strayAt = () => false, archived = null, aggCs = null, noteCat = null } = {}) => {
     const total = arr.reduce((a, b) => a + b, 0);
@@ -452,6 +463,7 @@ function renderTable(body) {
     });
     const totalTd = moneyCell(total, { class: "total" });
     const agg = aggCs ? { cs: aggCs, months: monthTds.map(withPred), total: withPred(totalTd) } : null;
+    if (agg) cls += " has-agg";
     const tr = el("tr", { class: cls }, labelCell(label, category, archived, noteCat), monthTds, totalTd,
       moneyCell(avgDiv ? Math.round(total / avgDiv) : 0, { class: "avg" }),
       predTd, showPred ? el("td", { class: "monthly-col" }) : null);
@@ -504,7 +516,7 @@ function renderTable(body) {
     const anyStray = (m) => cs.some((c) => off(c, m) && catArr(c.id)[m]);
     const rows = [paint(line(g.name, sumArr(cs.map((c) => catArr(c.id))), { cls: "group-row", category: `g:${g.id}`, predCs: cs, aggCs: cs, offAt: allOff, strayAt: anyStray }), g, "group", `g:${g.id}`)];
     for (const c of cs) {
-      rows.push(paint(line(c.name, catArr(c.id), { cls: `cat-line${c.archivedFrom ? " archived-cat" : ""}`, category: c.id, predCs: [c], offAt: (m) => off(c, m), strayAt: (m) => off(c, m), archived: c.archivedFrom || null, noteCat: c }), g, "cat", c.id));
+      rows.push(paint(line(c.name, catArr(c.id), { cls: `cat-line${c.archivedFrom ? " archived-cat" : ""}`, category: c.id, predCs: [c], offAt: (m) => off(c, m), strayAt: (m) => off(c, m), archived: c.archivedFrom || null, noteCat: c, aggCs: view.inline && !showPred ? [c] : null }), g, "cat", c.id));
       if (showPred) rows.push(paint(predCatLine(c), g, "cat"));
     }
     blocks.push(block(rows, g.sectionBreak && gi > 0 ? " section-start" : ""));
