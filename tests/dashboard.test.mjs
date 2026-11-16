@@ -584,7 +584,9 @@ test("predictions inline: a row under each category, Monthly at the far right; l
 
   // hide the prediction rows; Predicted / mo stays
   $("#sumPred").click();
-  assert.equal($$("#summaryBody tr.pred-row").length, 0);
+  assert.equal($$("#summaryBody tr.pred-row:not(.subtotal-pred)").length, 0);
+  assert.ok($$("#summaryBody tr.subtotal-pred").length > 0, "the predicted subtotal row always shows");
+  assert.ok(sumRow("Subtotal").nextElementSibling.classList.contains("subtotal-pred"));
   assert.equal(sumRow("Groceries").children[15].textContent, "$120");
   $("#sumPred").click();
   assert.ok($$("#summaryBody tr.pred-row").length > 0);
@@ -720,4 +722,84 @@ test("Settings tab: connection (token never shown back, can be forgotten) and ac
   button("#settingsPanel", "Forget token").click();
   await settle();
   assert.equal(JSON.parse(localStorage.getItem("fd:settings")).ghToken, "");
+});
+
+test("archived categories: from a chosen month; earlier years keep them; archived months gray, money left in them red", async () => {
+  await go("#summary");
+  const editRow = (name) => $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === name);
+  const row = (name) => $$("#summaryBody tr").find((r) => r.dataset.key === name);
+  const cells = (tr) => [...tr.children].slice(1, 13);
+
+  // archive Subscriptions from Nov 2026 (its Netflix charge is from 2026-11-10) and Travel (no spending)
+  $("#editCategories").click();
+  editRow("Subscriptions").querySelector("button[title^='Retire']").click();
+  const month = editRow("Subscriptions").querySelector("input.archive-month");
+  assert.ok(month, "Archive… turns into a month picker");
+  month.value = "2026-11"; fire(month, "change");
+  editRow("Travel").querySelector("button[title^='Retire']").click();
+  const tm = editRow("Travel").querySelector("input.archive-month");
+  tm.value = "2026-11"; fire(tm, "change");
+  button("#summaryBody", "Save categories").click();
+  await settle();
+  const saved = outboxNow().categories.doc.groups.flatMap((g) => g.categories);
+  assert.equal(saved.find((c) => c.id === "subscriptions").archivedFrom, "2026-11");
+
+  // 2027 (Nov 2026 – Oct 2027): Travel is gone; Subscriptions stays because money is still in it, shown red
+  $("#sumYear").value = "2027"; fire($("#sumYear"), "change");
+  assert.equal(row("travel"), undefined, "archived for the whole year with nothing in it: hidden");
+  assert.ok(row("subscriptions"), "still has money in it: shown so it can be reassigned");
+  assert.match(row("subscriptions").querySelector("td.label").textContent, /archived/);
+  const [nov, dec] = cells(row("subscriptions"));
+  assert.ok(nov.classList.contains("off") && nov.classList.contains("stray"), "archived month with money: gray + red");
+  assert.ok(dec.classList.contains("off") && !dec.classList.contains("stray"));
+  const predCells = [...row("subscriptions").nextElementSibling.querySelectorAll("input")];
+  assert.ok(predCells[0].disabled && predCells[11].disabled, "no predictions in archived months");
+
+  // 2026 (before it was archived): both are back, nothing grayed
+  $("#sumYear").value = "2026"; fire($("#sumYear"), "change");
+  assert.ok(row("travel") && row("subscriptions"));
+  assert.ok(cells(row("subscriptions")).every((td) => !td.classList.contains("off")));
+
+  // archived from Dec instead: Nov is a normal month again, the rest of the year is gray
+  $("#editCategories").click();
+  const m2 = editRow("Subscriptions").querySelector("input.archive-month");
+  m2.value = "2026-12"; fire(m2, "change");
+  button("#summaryBody", "Save categories").click();
+  $("#sumYear").value = "2027"; fire($("#sumYear"), "change");
+  const [nov2, dec2] = cells(row("subscriptions"));
+  assert.ok(!nov2.classList.contains("off") && !nov2.classList.contains("stray") && nov2.textContent);
+  assert.ok(dec2.classList.contains("off"));
+  const p2 = [...row("subscriptions").nextElementSibling.querySelectorAll("input")];
+  assert.ok(!p2[0].disabled && p2[1].disabled);
+
+  // Transactions: a category archived by a row's date isn't offered, unless the row is still in it (then red)
+  $("#editCategories").click();
+  const m3 = editRow("Subscriptions").querySelector("input.archive-month");
+  m3.value = "2026-11"; fire(m3, "change");
+  button("#summaryBody", "Save categories").click();
+  await go("#transactions");
+  const nf = rowOf("NETFLIX").querySelector("select");
+  assert.equal(nf.value, "subscriptions");
+  assert.ok(nf.classList.contains("stray"), "still in an archived category: red");
+  assert.match(nf.selectedOptions[0].textContent, /\(archived\)/);
+  const sw = $$("tr.tx select").find((s) => s.value !== "subscriptions" && s.value !== "travel");
+  assert.ok(![...sw.options].some((o) => o.value === "subscriptions" || o.value === "travel"), "archived categories aren't offered");
+  nf.value = "groceries"; fire(nf, "change");
+  assert.ok(!nf.classList.contains("stray"), "reassigned");
+
+  // AI: rules can't move a transaction into a category archived by its date
+  const { evaluateRules } = await import("../web/lib/ai.js");
+  const cats = { groups: [{ id: "g", name: "G", categories: [{ id: "old", name: "Old", archivedFrom: "2026-11" }] }] };
+  const rules = [{ category: "old", conds: [] }];
+  const r = evaluateRules(rules, [{ date: "2026-10-31", category: null }, { date: "2026-11-01", category: null }], {}, cats);
+  assert.deepEqual(r.proposals.map((p) => p.t.date), ["2026-10-31"]);
+
+  // unarchive: back for every month
+  await go("#summary");
+  $("#editCategories").click();
+  [...$$("#summaryBody button")].filter((b) => b.textContent === "Unarchive").forEach((b) => b.click());
+  assert.equal($$("#summaryBody input.archive-month").length, 0);
+  button("#summaryBody", "Save categories").click();
+  await settle();
+  assert.ok(outboxNow().categories.doc.groups.flatMap((g) => g.categories).every((c) => !c.archivedFrom));
 });

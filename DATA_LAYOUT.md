@@ -7,7 +7,7 @@ accounts.json                     { accounts: [Account] }
 transactions/<accountId>/<YYYY>.json   { accountId, year, transactions: [Transaction] }  (newest first)
 balances.json                     { snapshots: [{accountId, date, balanceCents, source}] }   → net worth
 imports.json                      { imports: [{id, accountId, at, added, updated, removed, duplicates, extractorId, url, ...}] }
-categories.json                   v2: { version: 2, groups: [{id, name, color?: "#rrggbb", sectionBreak?, categories: [{id, name}]}] }  (array order = display order; sectionBreak starts a new block with its own subtotal in the summary; v1 flat lists migrate on read)
+categories.json                   v2: { version: 2, groups: [{id, name, color?: "#rrggbb", sectionBreak?, categories: [{id, name, archivedFrom?: "YYYY-MM"}]}] }  (array order = display order; sectionBreak starts a new block with its own subtotal in the summary; archivedFrom = first month the category is retired; v1 flat lists migrate on read)
 rules.json                        { rules: [...] }          deterministic merchant → category rules (learned)
 corrections.json                  { corrections: [...] }    user overrides of AI categories (training signal)
 ai-notes.md                       categorizer's self-maintained notes

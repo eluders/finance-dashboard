@@ -57,7 +57,7 @@ export function catPicker({ label, set, cats, uncat = true, archive = true, popo
       const gcb = el("input", { type: "checkbox" });
       gcb.onchange = () => setAll(ids, gcb.checked);
       groupBoxes.push({ cb: gcb, ids });
-      return el("div", { class: "cat-picker-group" }, el("label", { class: "cb group" }, gcb, g.name), el("div", {}, g.categories.map((c) => item(c.id, c.name))));
+      return el("div", { class: "cat-picker-group" }, el("label", { class: "cb group" }, gcb, g.name), el("div", {}, g.categories.map((c) => item(c.id, c.archivedFrom ? `${c.name} (archived)` : c.name, c.archivedFrom ? "archived-cat" : ""))));
     })));
   box.append(summary, body);
   if (popover) document.addEventListener("click", (e) => { if (box.open && !box.contains(e.target)) box.open = false; });

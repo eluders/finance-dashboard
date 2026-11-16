@@ -220,7 +220,7 @@ async function runAi() {
     });
     const parts = splitReply(r.text);
     const parsed = run.mode === "notes" ? { rules: [], errors: [] } : parseRules(parts.rules, p.allowed);
-    const { proposals, counts } = evaluateRules(parsed.rules, p.refs, p.accounts);
+    const { proposals, counts } = evaluateRules(parsed.rules, p.refs, p.accounts, ctx.cats);
     const newNotes = run.mode === "notes" ? (parts.notes ?? r.text).replace(/^```\w*\s*|```\s*$/g, "").trim() : parts.notes?.trim();
     const notesAfter = !run.oneTime && newNotes && newNotes !== notesBefore.trim() ? newNotes : null;
     Object.assign(run, {

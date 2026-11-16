@@ -15,7 +15,7 @@
 //   category <id> | category none current category ("none" = uncategorized)
 // Optionally followed by a line "NOTES:" and the complete updated AI notes (the AI's long-term memory,
 // ai-notes.md in the data repo). The user approves note changes together with the category changes.
-import { ARCHIVE_ID } from "../../extension/src/lib/categories.js";
+import { ARCHIVE_ID, archivedAt } from "../../extension/src/lib/categories.js";
 
 export const MODELS = {
   "claude-haiku-5-5": { label: "Claude Haiku 5.5 (cheapest)", inPerM: 0.10, outPerM: 0.50, inPerMLong: 0.50, outPerMLong: 2.50, longAbove: 100_000 },
@@ -48,7 +48,7 @@ export const merchantKey = (d) => String(d || "").toUpperCase().replace(/[^A-Z0-
  */
 export function buildPrompt({ txns, categories, allowed, instructions = "", examples = [], accounts = {}, aiNotes = "", oneTime = false }) {
   const refs = [...txns].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const catLines = categories.groups.flatMap((g) => g.categories.filter((c) => allowed.has(c.id)).map((c) => `${c.id} = ${g.name} > ${c.name}`));
+  const catLines = categories.groups.flatMap((g) => g.categories.filter((c) => allowed.has(c.id)).map((c) => `${c.id} = ${g.name} > ${c.name}${c.archivedFrom ? ` (archived: only for dates before ${c.archivedFrom}-01)` : ""}`));
   if (allowed.has(ARCHIVE_ID)) catLines.push(`${ARCHIVE_ID} = hide it (transfers, card payments, duplicates, anything that shouldn't count as spending)`);
 
   const system = [
@@ -262,8 +262,10 @@ function matches(cond, t, ref, last4) {
  * Applies rules to the transactions that were sent (refs). Last matching rule wins.
  * Returns proposals for transactions whose category would actually change:
  *   [{ ref, t, from, to, rule }]  plus per-rule match counts.
+ * With `categories`, a rule never moves a transaction into a category archived by its date.
  */
-export function evaluateRules(rules, refs, accounts = {}) {
+export function evaluateRules(rules, refs, accounts = {}, categories = null) {
+  const cat = new Map((categories?.groups || []).flatMap((g) => g.categories.map((c) => [c.id, c])));
   const winner = new Map();
   const counts = rules.map(() => 0);
   refs.forEach((t, i) => {
@@ -275,6 +277,7 @@ export function evaluateRules(rules, refs, accounts = {}) {
   for (const [i, ri] of winner) {
     const t = refs[i];
     const to = rules[ri].category;
+    if (to && archivedAt(cat.get(to), t.date)) continue;
     if ((t.category || null) !== to) proposals.push({ ref: i + 1, t, from: t.category || null, to, rule: ri });
   }
   proposals.sort((a, b) => a.rule - b.rule || (a.t.date < b.t.date ? -1 : 1));

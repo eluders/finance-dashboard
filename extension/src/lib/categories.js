@@ -1,5 +1,7 @@
 // Category taxonomy: ordered groups, each with ordered categories.
-//   categories.json v2: { version: 2, groups: [{ id, name, color?, sectionBreak?, categories: [{ id, name }] }] }
+//   categories.json v2: { version: 2, groups: [{ id, name, color?, sectionBreak?, categories: [{ id, name, archivedFrom? }] }] }
+// archivedFrom ("YYYY-MM") retires a category from that month on: earlier months still show it, later
+// months show it grayed out, and transactions still in it from then on are flagged for reassigning.
 // Category ids are stable (renames don't touch transactions). v1 (flat list with `group`) is migrated on read.
 //
 // Built-in "Archive" (id "archive"): not part of the user's groups. Archived transactions are hidden
@@ -34,6 +36,11 @@ export function categoryIndex(doc) {
   return m;
 }
 
+/** Is category `c` archived at `date` ("YYYY-MM-DD" or "YYYY-MM")? */
+export function archivedAt(c, date) {
+  return !!(c?.archivedFrom && date && String(date).slice(0, 7) >= c.archivedFrom);
+}
+
 export function uniqueId(name, taken) {
   const base = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "cat";
   const set = new Set(taken);
@@ -52,6 +59,7 @@ export function validateCategories(doc) {
     for (const c of g.categories) {
       if (!c.name?.trim()) throw new Error(`A category in "${g.name}" has no name.`);
       if (ids.has(c.id)) throw new Error(`Duplicate category id ${c.id}.`);
+      if (c.archivedFrom != null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(c.archivedFrom)) throw new Error(`"${c.name}" has a bad archive month "${c.archivedFrom}".`);
       if (c.id === ARCHIVE_ID) throw new Error(`"${c.name}" uses the id reserved for the built-in Archive.`);
       ids.add(c.id);
     }
