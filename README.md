@@ -32,9 +32,11 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
   - Changes show instantly and are saved to GitHub as one commit about a minute later, or right away with **Save now**.
   - Drag the ☰ handles to reorder categories or move them between groups.
   - **Archive**: a built-in category for things that shouldn't count, like card payments and transfers. Archived transactions are hidden from the summary and the list unless you filter to Archive.
-  - **AI categorize**:
-    - Pick a date range, which transactions to send and which categories the AI may use, then explain anything special.
-    - It suggests category changes as rules. You review them before → after and apply the ones you want.
+  - **AI categorize** (button on the Transactions tab):
+    - Filter the table to what you want categorized, add notes for the session if needed, and click **Categorize**.
+    - The table then shows only the rows it would change, with an **After** column. Untick what you don't want, then **Apply**.
+    - The AI keeps its own notes and proposes updates after each session, which you approve. Tick **One-time only** for things it shouldn't remember.
+    - Past sessions are on the **Logs** tab.
     - It uses Claude Haiku by default (cheap; costs are shown). Add your Anthropic API key in Settings.
   - **Counted amount**: in a transaction's expanded row, count it as a different amount, e.g. $0 if it was reimbursed, or just your share. The bank amount is kept.
 
@@ -65,7 +67,7 @@ See [CLAUDE.md](CLAUDE.md) for the architecture and [DATA_LAYOUT.md](DATA_LAYOUT
 - [x] Web dashboard on GitHub Pages: categories, notes, splits, buffered saves
 - [ ] Ally extractor, checking and credit card
 - [x] AI categorize: user-directed, rule-based suggestions with before/after review (Claude Haiku)
-- [ ] Learning loop: corrections feeding `rules.json` and `ai-notes.md`
+- [x] AI notes that grow from sessions (with one-time-only sessions)
 - [ ] Balance snapshots → net worth over time
 - [ ] Fidelity (Roth IRA), Ascensus, 401k, HSA: holdings and contribution extractors
 - [ ] Investment tracker: positions, cost basis, money-weighted return (XIRR), allocation vs. target, DCA suggestions

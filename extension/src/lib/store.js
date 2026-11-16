@@ -210,6 +210,23 @@ export async function applyEdits({ txEdits = [], categories = null }) {
   return out;
 }
 
+// ---------- AI notes: the categorizer's long-term memory (ai-notes.md in the data repo) ----------
+export const AI_NOTES_FILE = "ai-notes.md";
+
+export async function getNotes() {
+  const repo = await getRepo();
+  const head = await repo.headSha();
+  return { ai: head ? (await repo.readText(AI_NOTES_FILE, head)) || "" : "" };
+}
+
+export async function saveNotes({ ai }) {
+  if (typeof ai !== "string") throw new Error("Nothing to save.");
+  const repo = await getRepo();
+  await ensureInitialized(repo);
+  await repo.transact(async () => ({ files: [{ path: AI_NOTES_FILE, content: ai.trimEnd() + "\n" }], message: "Update AI notes" }));
+  return getNotes();
+}
+
 /** Single immediate edit (patch of note/category/splits). The dashboard uses applyEdits via the outbox instead. */
 export async function updateTransaction({ accountId, id, date, patch }) {
   for (const k of Object.keys(patch)) if (!EDITABLE_FIELDS.includes(k)) throw new Error(`Field "${k}" can't be edited.`);

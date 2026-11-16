@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseRules, evaluateRules, buildPrompt, historyExamples, callClaude, estimateCost } from "../web/lib/ai.js";
+import { parseRules, evaluateRules, buildPrompt, historyExamples, callClaude, estimateCost, splitReply, diffLines } from "../web/lib/ai.js";
 
 const ids = new Set(["groceries", "dining", "trip", "archive"]);
 const tx = (id, date, amountCents, description, extra = {}) => ({ id, accountId: "a1", date, amountCents, description, ...extra });
@@ -59,7 +59,7 @@ test("buildPrompt: compact lines, refs by date, only allowed categories (+ archi
   assert.match(user, /^1\|2026-01-01\|2500\.00\|1234\|PAYROLL\|jan pay\|-$/m);
   assert.match(user, /^2\|2026-02-01\|-12\.99\|1234\|NETFLIX COM\|\|-$/m, "separators and newlines can't break the format");
   assert.match(user, /NETFLIX → dining ×3/);
-  assert.match(user, /My instructions:\nbe careful/);
+  assert.match(user, /My notes for this session:\nbe careful/);
 });
 
 test("historyExamples: merchant → most common category", () => {
@@ -104,3 +104,24 @@ test("cost estimate uses Haiku's cheaper rate under 100K prompt tokens", () => {
   assert.equal(estimateCost("claude-haiku-5-5", 1_000_000, 0), 0.5, "above 100K the long-context rate applies");
   assert.equal(estimateCost("claude-haiku-5-5", 50_000, 10_000), 0.005 + 0.005);
 });
+
+test("splitReply / diffLines: rules and the optional NOTES block", () => {
+  const r = splitReply("SET dining WHERE ids 1\n\nNOTES:\n- a\n- b\n");
+  assert.equal(r.rules.trim(), "SET dining WHERE ids 1");
+  assert.equal(r.notes, "- a\n- b");
+  assert.equal(splitReply("SET dining WHERE ids 1").notes, null);
+  assert.equal(splitReply("SET x WHERE ids 1\n**NOTES:**\n- c").notes, "- c");
+  assert.deepEqual(diffLines("- a\n- b", "- a\n- c\n"), { added: ["- c"], removed: ["- b"] });
+});
+
+test("buildPrompt: one-time sessions tell the model not to write NOTES; normal ones invite it", () => {
+  const cats = { version: 2, groups: [{ id: "food", name: "Food", categories: [{ id: "dining", name: "Dining" }] }] };
+  const base = { txns: [tx("a", "2026-01-01", -100, "X")], categories: cats, allowed: new Set(["dining"]), aiNotes: "- old note" };
+  const normal = buildPrompt({ ...base, instructions: "hi" });
+  assert.match(normal.system, /end your reply with a line `NOTES:`/);
+  assert.match(normal.user, /AI NOTES:\n- old note/);
+  const once = buildPrompt({ ...base, instructions: "hi", oneTime: true });
+  assert.match(once.system, /one-time only: do NOT write NOTES/);
+  assert.match(once.user, /one-time only, don't remember them/);
+});
+

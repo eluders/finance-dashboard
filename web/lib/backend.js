@@ -66,6 +66,8 @@ async function saveAiRun({ run }) {
 async function deleteAiRun({ id }) { await storage().set({ [AI_RUNS]: (await getAiRuns()).filter((r) => r.id !== id) }); }
 
 const handlers = {
+  getNotes: () => store.getNotes(),
+  saveNotes: (n) => store.saveNotes(n),
   aiRequest,
   getAiRuns,
   saveAiRun,

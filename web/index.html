@@ -17,7 +17,7 @@
       <nav class="tabs">
         <a href="#summary" data-tab="summary">Summary</a>
         <a href="#transactions" data-tab="transactions">Transactions</a>
-        <a href="#ai" data-tab="ai">AI categorize</a>
+        <a href="#logs" data-tab="logs">Logs</a>
         <a href="#settings" data-tab="settings">Settings</a>
       </nav>
       <div class="spacer"></div>
@@ -43,19 +43,23 @@
     </section>
 
     <section id="tab-transactions" hidden>
-      <div class="toolbar">
+      <div class="toolbar" id="txToolbar">
         <select id="filterAccount" title="Account"><option value="">All accounts</option></select>
-        <select id="filterCategory" title="Category"></select>
+        <div id="filterCategoryBox"></div>
         <select id="filterDate" title="Date"></select>
+        <span id="dateRange" class="row" hidden><input id="dateFrom" type="date" title="From" /> – <input id="dateTo" type="date" title="To" /></span>
         <input id="search" type="search" placeholder="Search description or note" />
         <span id="count" class="muted"></span>
+        <div class="spacer"></div>
+        <button id="aiOpen" class="primary" title="Let AI categorize the transactions shown">✨ AI categorize</button>
       </div>
+      <div id="reviewBanner" class="review-banner" hidden></div>
       <div id="txns"></div>
     </section>
 
-    <section id="tab-ai" hidden>
-      <div id="aiForm" class="card"></div>
-      <div id="aiLog"></div>
+    <section id="tab-logs" hidden>
+      <div class="toolbar"><h2>AI categorize sessions</h2></div>
+      <div id="logsList"></div>
     </section>
 
     <section id="tab-settings" hidden>
@@ -64,6 +68,7 @@
       <div id="accountPanel" class="card"></div>
     </section>
   </main>
+  <aside id="aiPanel" class="ai-panel" aria-label="AI categorize"></aside>
   <script type="module" src="dashboard.js"></script>
 </body>
 </html>

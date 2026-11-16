@@ -9,7 +9,8 @@ import { onStorageChanged } from "../extension/src/lib/platform.js";
 import { OUTBOX_KEY, pendingCount } from "./lib/outbox.js";
 import { call } from "./lib/backend.js";
 import { MODELS } from "./lib/ai.js";
-import { renderAiTab } from "./ai-tab.js";
+import { initAi, renderAiPanel, renderLogs, isPanelOpen, openPanel, review, toggleProposal } from "./ai-panel.js";
+import { catPicker, pickerIds, describeSelection, UNCAT } from "./cat-picker.js";
 
 const $ = (id) => document.getElementById(id);
 let accounts = [], txns = [], cats = { version: 2, groups: [] }, catIdx = new Map(), catOptionsHtml = "";
@@ -19,27 +20,30 @@ const rowEls = new Map(); // txn id -> <tr>
 const byId = () => Object.fromEntries(accounts.map((a) => [a.id, a]));
 const newId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 10);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const UNCAT = "__uncat";
 
 function setStatus(msg, cls = "") { $("status").className = `status ${cls}`; $("status").textContent = msg; }
 
-// ---------- AI tab (see ai-tab.js) ----------
-const aiCtx = {
+// ---------- AI categorize (see ai-panel.js) ----------
+initAi({
   get txns() { return txns; }, get cats() { return cats; }, get accounts() { return accounts; }, get catIdx() { return catIdx; },
   get loaded() { return loaded; },
   call, setStatus,
   /** Category-only edit that keeps note, splits and counted amount. */
   setCategory(t, category) { commitEdit(t, { category }); },
-};
+  shownRows: () => shownRows(),
+  filterLabel: () => filterLabel(),
+  onReviewChange: () => { if (tab === "transactions") renderTransactions(); else if (tab === "logs") renderLogs(); },
+});
 
 // ---------- tabs ----------
-const TABS = ["summary", "transactions", "ai", "settings"];
+const TABS = ["summary", "transactions", "logs", "settings"];
 let tab = null;
 let editingCategories = false;
 
 function showTab(name) {
   if (!TABS.includes(name)) name = "summary";
   tab = name;
+  document.body.dataset.tab = name; // the AI panel only shows on Transactions
   for (const t of TABS) $(`tab-${t}`).hidden = t !== name;
   for (const a of document.querySelectorAll(".tabs a")) a.classList.toggle("active", a.dataset.tab === name);
   if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
@@ -49,7 +53,7 @@ function renderTab() {
   if (tab === "summary") renderSummary();
   else if (tab === "transactions") renderTransactions();
   else if (tab === "settings") renderSettings();
-  else if (tab === "ai") renderAiTab(aiCtx);
+  else if (tab === "logs") renderLogs();
 }
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
 
@@ -57,7 +61,8 @@ $("reload").onclick = load;
 $("editCategories").onclick = () => { if (editingCategories) return; editingCategories = true; openCategoryEditor(); renderSummary(); };
 $("sumYear").onchange = renderSummary;
 $("sumAccount").onchange = renderSummary;
-for (const id of ["filterAccount", "filterCategory", "filterDate"]) $(id).onchange = renderTransactions;
+for (const id of ["filterAccount", "filterDate", "dateFrom", "dateTo"]) $(id).onchange = renderTransactions;
+$("aiOpen").onclick = () => { openPanel(); renderTransactions(); };
 $("search").oninput = renderTransactions;
 showTab(location.hash.slice(1));
 load();
@@ -113,6 +118,7 @@ function fillAccountSelect(sel) {
 function setCategories(doc) {
   cats = doc;
   catIdx = categoryIndex(doc);
+  if ($("filterCategory")) buildCategoryFilter();
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   catOptionsHtml = `<option value="">Uncategorized</option>` + doc.groups.map((g) =>
     `<optgroup label="${esc(g.name)}">${g.categories.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</optgroup>`).join("")
@@ -266,34 +272,43 @@ function renderSummary() {
 }
 
 // ---------- transactions tab ----------
-function openTransactions({ category = "", date = "", account = "" }) {
-  $("filterAccount").value = account;
-  fillCategoryFilter(); fillDateFilter();
-  $("filterCategory").value = category;
-  $("filterDate").value = date;
-  $("search").value = "";
-  location.hash = "#transactions";
+// Category filter: a Set of category ids + UNCAT + ARCHIVE_ID. Default = everything but Archive.
+const allButArchive = () => new Set(pickerIds(cats).filter((i) => i !== ARCHIVE_ID));
+let txCatSet = null;      // the live Set the picker edits
+let txCatIsDefault = true; // still "everything but Archive" (so new categories join it)
+const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
+
+function buildCategoryFilter() {
+  if (!txCatSet || txCatIsDefault) txCatSet = allButArchive();
+  else for (const id of [...txCatSet]) if (id !== UNCAT && id !== ARCHIVE_ID && !catIdx.has(id)) txCatSet.delete(id); // deleted categories
+  const box = $("filterCategoryBox");
+  box.innerHTML = "";
+  box.append(catPicker({ label: "Categories", set: txCatSet, cats, popover: true, id: "filterCategory", onChange: (set) => { txCatIsDefault = sameSet(set, allButArchive()); renderTransactions(); } }));
 }
 
-function fillCategoryFilter() {
-  const sel = $("filterCategory");
-  const keep = sel.value;
-  sel.innerHTML = "";
-  sel.append(new Option("All categories (not archived)", ""), new Option("Uncategorized", UNCAT), new Option("Archive", ARCHIVE_ID));
-  for (const g of cats.groups) {
-    const og = el("optgroup", { label: g.name });
-    og.append(new Option(`All ${g.name}`, `g:${g.id}`));
-    for (const c of g.categories) og.append(new Option(c.name, c.id));
-    sel.append(og);
-  }
-  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
+function setCategoryFilter(ids) {
+  txCatSet = new Set(ids);
+  txCatIsDefault = sameSet(txCatSet, allButArchive());
+  buildCategoryFilter();
+}
+
+function openTransactions({ category = "", date = "", account = "" }) {
+  $("filterAccount").value = account;
+  fillDateFilter();
+  if (!category) setCategoryFilter(allButArchive());
+  else if (category.startsWith("g:")) setCategoryFilter(cats.groups.find((g) => g.id === category.slice(2))?.categories.map((c) => c.id) || []);
+  else setCategoryFilter([category]);
+  $("filterDate").value = date;
+  $("dateRange").hidden = true;
+  $("search").value = "";
+  location.hash = "#transactions";
 }
 
 function fillDateFilter() {
   const sel = $("filterDate");
   const keep = sel.value;
   sel.innerHTML = "";
-  sel.append(new Option("All dates", ""));
+  sel.append(new Option("All dates", ""), new Option("Custom range…", "custom"));
   const months = [...new Set(txns.map((t) => t.date.slice(0, 7)))].sort().reverse();
   let year = null;
   for (const ym of months) {
@@ -301,31 +316,72 @@ function fillDateFilter() {
     sel.append(new Option(`${MONTHS[+ym.slice(5) - 1]} ${year}`, ym));
   }
   sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
+  $("dateRange").hidden = sel.value !== "custom";
 }
 
-/** Does transaction t (or one of its split parts) fall in category filter f? */
+function inDates(t) {
+  const v = $("filterDate").value;
+  if (v !== "custom") return t.date.startsWith(v);
+  const from = $("dateFrom").value, to = $("dateTo").value;
+  return (!from || t.date >= from) && (!to || t.date <= to);
+}
+
+/** Does transaction t (or one of its split parts) match the category filter? Archived rows need Archive ticked. */
 const isArchived = (t) => (t.splits?.length ? t.splits.every((s) => s.category === ARCHIVE_ID) : t.category === ARCHIVE_ID);
-function inCategory(t, f) {
-  if (f !== ARCHIVE_ID && isArchived(t)) return false; // archived rows only show under the Archive filter
-  if (!f) return true;
-  const cats_ = t.splits?.length ? t.splits.map((s) => s.category) : [t.category];
-  if (f === UNCAT) return cats_.some((c) => !c || !catIdx.has(c));
-  if (f.startsWith("g:")) return cats_.some((c) => catIdx.get(c)?.groupId === f.slice(2));
-  return cats_.includes(f);
+function inCategory(t, set) {
+  if (isArchived(t)) return set.has(ARCHIVE_ID);
+  const keys = (t.splits?.length ? t.splits.map((s) => s.category) : [t.category]).map((c) => (c && catIdx.has(c) ? c : UNCAT));
+  return keys.some((k) => set.has(k));
+}
+
+/** The rows the filters select (also the AI's scope). */
+function shownRows() {
+  if (!loaded) return [];
+  const acct = $("filterAccount").value;
+  const q = $("search").value.toLowerCase();
+  const set = txCatSet || allButArchive();
+  return txns.filter((t) => (!acct || t.accountId === acct) && inDates(t) && inCategory(t, set)
+    && (!q || t.description.toLowerCase().includes(q) || (t.note || "").toLowerCase().includes(q) || (t.merchant || "").toLowerCase().includes(q)));
+}
+
+/** Short description of the current filters (for the AI log). */
+function filterLabel() {
+  const parts = [];
+  const a = accounts.find((x) => x.id === $("filterAccount").value);
+  if (a) parts.push(`…${a.last4 || a.name}`);
+  const d = $("filterDate");
+  if (d.value === "custom") parts.push(`${$("dateFrom").value || "start"} – ${$("dateTo").value || "today"}`);
+  else if (d.value) parts.push(d.selectedOptions[0]?.textContent || d.value);
+  const cs = describeSelection(txCatSet || allButArchive(), cats);
+  if (cs !== "all but Archive") parts.push(cs);
+  if ($("search").value) parts.push(`"${$("search").value}"`);
+  return parts.join(" · ") || "all";
 }
 
 function renderTransactions() {
   if (!loaded) return;
-  fillCategoryFilter(); fillDateFilter();
-  const acct = $("filterAccount").value;
-  const catF = $("filterCategory").value;
-  const dateF = $("filterDate").value;
-  const q = $("search").value.toLowerCase();
-  const rows = txns.filter((t) => (!acct || t.accountId === acct) && t.date.startsWith(dateF) && inCategory(t, catF)
-    && (!q || t.description.toLowerCase().includes(q) || (t.note || "").toLowerCase().includes(q) || (t.merchant || "").toLowerCase().includes(q)));
-  const net = rows.reduce((s, t) => s + trackedCents(t), 0);
-  const hidden = catF === ARCHIVE_ID ? 0 : txns.filter((t) => isArchived(t) && (!acct || t.accountId === acct) && t.date.startsWith(dateF)).length;
-  $("count").textContent = `${rows.length} transaction${rows.length === 1 ? "" : "s"} · net ${fmtMoney(net)}${hidden ? ` · ${hidden} archived hidden` : ""}`;
+  fillDateFilter();
+  if (!$("filterCategory")) buildCategoryFilter();
+  const rv = review();
+  document.body.classList.toggle("reviewing", !!rv);
+  $("txToolbar").classList.toggle("disabled", !!rv);
+  $("aiOpen").hidden = isPanelOpen();
+
+  let rows;
+  if (rv) {
+    rows = txns.filter((t) => rv.byKey.has(`${t.accountId}/${t.id}`)).sort((a, b) => rv.byKey.get(`${a.accountId}/${a.id}`).rule - rv.byKey.get(`${b.accountId}/${b.id}`).rule || (a.date < b.date ? 1 : -1));
+    const sel = rv.run.proposals.filter((p) => p.selected).length;
+    $("reviewBanner").hidden = false;
+    $("reviewBanner").textContent = `Reviewing AI suggestions: showing only the ${rows.length} rows it would change (${sel} selected). Apply or discard in the panel on the right.`;
+    $("count").textContent = "";
+  } else {
+    $("reviewBanner").hidden = true;
+    rows = shownRows();
+    const net = rows.reduce((s, t) => s + trackedCents(t), 0);
+    const hidden = (txCatSet || allButArchive()).has(ARCHIVE_ID) ? 0 : txns.filter((t) => isArchived(t) && (!$("filterAccount").value || t.accountId === $("filterAccount").value) && inDates(t)).length;
+    $("count").textContent = `${rows.length} transaction${rows.length === 1 ? "" : "s"} · net ${fmtMoney(net)}${hidden ? ` · ${hidden} archived hidden` : ""}`;
+  }
+
   const accts = byId();
   rowEls.clear();
   const body = el("tbody");
@@ -335,18 +391,22 @@ function renderTransactions() {
     body.append(tr);
     if (expanded.has(t.id)) body.append(detailRow(t));
   }
+  const narrow = isPanelOpen();
   $("txns").innerHTML = "";
   $("txns").append(el("div", { class: "card table-card" }, el("table", { class: "dense" },
     el("colgroup", {},
-      el("col", { style: "width:74px" }),   // account badge
-      el("col", { style: "width:96px" }),   // MM-DD-YYYY
-      el("col", { style: "width:25%" }),    // bank description
-      el("col", { style: "width:105px" }),  // amount
-      el("col"),                            // your note
-      el("col", { style: "width:220px" })), // category
-    el("thead", {}, el("tr", {}, el("th", {}, "Account"), el("th", {}, "Date"), el("th", {}, "Description"), el("th", { class: "num" }, "Amount"), el("th", {}, "Note"), el("th", {}, "Category"))),
+      el("col", { style: `width:${narrow ? 64 : 74}px` }),  // account badge
+      el("col", { style: `width:${narrow ? 88 : 96}px` }),  // MM-DD-YYYY
+      el("col", { style: `width:${narrow ? 22 : 25}%` }),   // bank description
+      el("col", { style: `width:${narrow ? 92 : 105}px` }), // amount
+      el("col"),                                            // your note
+      el("col", { style: `width:${narrow ? 170 : 220}px` }), // category
+      rv ? el("col", { style: "width:180px" }) : null),     // AI's proposal
+    el("thead", {}, el("tr", {}, el("th", {}, "Account"), el("th", {}, "Date"), el("th", {}, "Description"), el("th", { class: "num" }, "Amount"), el("th", {}, "Note"),
+      el("th", {}, rv ? "Before" : "Category"), rv ? el("th", { class: "after-col" }, "After (AI)") : null)),
     body,
   )));
+  if (isPanelOpen() && !rv) renderAiPanel();
 }
 
 function rowFor(t, accts = byId()) {
@@ -374,9 +434,21 @@ function rowFor(t, accts = byId()) {
     amountCell(t),
     el("td", { class: "edit" }, note),
     el("td", { class: "edit" }, catCell),
+    afterCell(t),
   );
-  tr.onclick = (e) => { if (!e.target.closest("input, select, button")) toggle(t); };
+  tr.onclick = (e) => { if (!e.target.closest("input, select, button, label")) toggle(t); };
   return tr;
+}
+
+/** While reviewing an AI run: the proposed category with a keep/skip checkbox. */
+function afterCell(t) {
+  const p = review()?.byKey.get(`${t.accountId}/${t.id}`);
+  if (!p) return null;
+  const cb = el("input", { type: "checkbox", checked: p.selected });
+  cb.onchange = () => { toggleProposal(p.key, cb.checked); tr().classList.toggle("unselected", !cb.checked); };
+  const tr = () => cb.closest("tr");
+  const name = p.to === ARCHIVE_ID ? "Archive" : catIdx.get(p.to)?.name || p.to;
+  return el("td", { class: `after-col${p.to === ARCHIVE_ID ? " muted" : ""}` }, el("label", { class: "cb after" }, cb, name));
 }
 
 /** Bank amount, or the counted amount with the bank amount struck through when overridden. */
@@ -414,7 +486,7 @@ function toggle(t) {
 function detailRow(t) {
   const a = byId()[t.accountId];
   const kv = (k, v) => (v == null || v === "" ? [] : [el("dt", {}, k), el("dd", {}, v)]);
-  return el("tr", { class: "detail" }, el("td", { colspan: 6 },
+  return el("tr", { class: "detail" }, el("td", { colspan: review() ? 7 : 6 },
     el("div", { class: "row", style: "align-items:flex-start; gap:32px; flex-wrap:nowrap" },
       el("dl", { class: "kv", style: "flex:1; margin:0; min-width:280px" },
         kv("Description", t.description),

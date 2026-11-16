@@ -13,6 +13,8 @@
 //   direction out | direction in  money out of / into the account
 //   account 1234                  account last 4
 //   category <id> | category none current category ("none" = uncategorized)
+// Optionally followed by a line "NOTES:" and the complete updated AI notes (the AI's long-term memory,
+// ai-notes.md in the data repo). The user approves note changes together with the category changes.
 import { ARCHIVE_ID } from "../../extension/src/lib/categories.js";
 
 export const MODELS = {
@@ -40,23 +42,28 @@ export const merchantKey = (d) => String(d || "").toUpperCase().replace(/[^A-Z0-
 
 /**
  * Builds the request. `txns` are the transactions in scope (already filtered; never split ones).
+ * `instructions` are the user's notes for this session; `aiNotes` are the AI's long-term notes.
+ * Unless `oneTime`, the model may end its reply with "NOTES:" and the complete updated notes.
  * Returns { system, user, refs } where refs[i] is the transaction behind ref i+1.
  */
-export function buildPrompt({ txns, categories, allowed, instructions, examples = [], accounts = {} }) {
+export function buildPrompt({ txns, categories, allowed, instructions = "", examples = [], accounts = {}, aiNotes = "", oneTime = false }) {
   const refs = [...txns].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const catLines = categories.groups.flatMap((g) => g.categories.filter((c) => allowed.has(c.id)).map((c) => `${c.id} = ${g.name} > ${c.name}`));
   if (allowed.has(ARCHIVE_ID)) catLines.push(`${ARCHIVE_ID} = hide it (transfers, card payments, duplicates, anything that shouldn't count as spending)`);
 
   const system = [
     "You categorize personal bank and credit card transactions for one household.",
-    "Reply ONLY with rules in this language, one per line, no other text:",
+    "Reply with rules in this language, one per line:",
     "SET <category_id> WHERE <condition> [AND <condition>]...  # short reason",
     "Conditions: ids 3 7 12-15 | text \"phrase\" (in description or note, case-insensitive) | dates YYYY-MM-DD..YYYY-MM-DD | amount 12.99 | amount 10..20 (absolute dollars) | direction out|in | account 1234 | category <id>|none (current category)",
     "Rules apply only to the transactions listed. When several rules match a transaction, the LAST one wins, so put broad rules first and exceptions after.",
     "Prefer one precise `text` rule over listing many ids when the phrase identifies the merchant. Use `ids` for one-offs.",
     "Use only the category ids listed. If you aren't reasonably sure about a transaction, leave it out (it stays as it is).",
-    "Follow the user's instructions exactly when they apply; they override your own judgment.",
-    "Example:",
+    "Categorize every listed transaction you reasonably can. Priority: the user's notes for this session, then AI NOTES (what you've learned before), then past categorizations.",
+    oneTime
+      ? "This session is one-time only: do NOT write NOTES. Reply with rules only."
+      : "AI NOTES are your long-term memory for this household. If this session's notes contain something worth remembering for future sessions (a lasting preference, how to treat a merchant), end your reply with a line `NOTES:` followed by the COMPLETE updated notes: concise markdown bullets, merged with the current ones, at most about 60 lines. Never store one-off actions (e.g. \"archive everything before March\"). If nothing should change, don't write NOTES.",
+    "Nothing else besides rules (and NOTES when appropriate). Example:",
     "SET groceries WHERE text \"TRADER JOE\"  # grocery store",
     "SET archive WHERE text \"ONLINE PAYMENT\" AND direction in  # card payment",
     "SET dining WHERE ids 4 9  # restaurants",
@@ -65,11 +72,28 @@ export function buildPrompt({ txns, categories, allowed, instructions, examples 
   const lines = refs.map((t, i) => [i + 1, t.date, money(t.amountCents), accounts[t.accountId]?.last4 || "", clean(t.description), clean(t.note), t.category || "-"].join("|"));
   const user = [
     `Categories:\n${catLines.join("\n")}`,
+    `AI NOTES:\n${aiNotes.trim() || "(none yet)"}`,
     examples.length ? `How I've categorized merchants before (merchant → category ×count):\n${examples.join("\n")}` : "",
     `Transactions (ref|date|amount, negative = money out|account|description|my note|current category):\n${lines.join("\n")}`,
-    `My instructions:\n${instructions?.trim() || "(none) Categorize what you can confidently."}`,
+    `My notes for this session${oneTime ? " (one-time only, don't remember them)" : ""}:\n${instructions.trim() || "(none) Categorize what you can confidently."}`,
   ].filter(Boolean).join("\n\n");
   return { system, user, refs };
+}
+
+/** Splits a reply into the rules part and the optional "NOTES:" block (null when absent). */
+export function splitReply(text) {
+  const m = /^[ \t]*\**NOTES:?\**[ \t]*$/im.exec(text);
+  if (!m) return { rules: text, notes: null };
+  const notes = text.slice(m.index + m[0].length).replace(/^\s*\n/, "").replace(/```\s*$/, "").trim();
+  return { rules: text.slice(0, m.index), notes: notes || null };
+}
+
+/** Line-level change summary between two versions of the notes. */
+export function diffLines(before, after) {
+  const norm = (s) => (s || "").split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.trim());
+  const a = norm(before), b = norm(after);
+  const A = new Set(a), B = new Set(b);
+  return { added: b.filter((l) => !A.has(l)), removed: a.filter((l) => !B.has(l)) };
 }
 
 /** "MERCHANT → category ×n" lines from already-categorized transactions, most common first. */
@@ -87,6 +111,38 @@ export function historyExamples(txns, limit = 250) {
     .map(([k, m]) => { const [cat, n] = [...m.entries()].sort((a, b) => b[1] - a[1])[0]; const total = [...m.values()].reduce((a, b) => a + b, 0); return { k, cat, n, total }; })
     .sort((a, b) => b.total - a.total).slice(0, limit)
     .map(({ k, cat, n, total }) => `${k} → ${cat} ×${n}${total > n ? ` (of ${total})` : ""}`);
+}
+
+/** Merchants the household has put in more than one category, with a few recent examples (amount→category (note)). */
+export function ambiguousMerchants(txns, { maxMerchants = 80, perMerchant = 6 } = {}) {
+  const by = new Map();
+  for (const t of txns) {
+    if (!t.category || t.splits?.length) continue;
+    const k = merchantKey(t.description);
+    if (!k) continue;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(t);
+  }
+  return [...by.entries()].filter(([, list]) => new Set(list.map((t) => t.category)).size > 1)
+    .sort((a, b) => b[1].length - a[1].length).slice(0, maxMerchants)
+    .map(([k, list]) => `${k}: ${list.slice(-perMerchant).map((t) => `${money(t.amountCents)}→${t.category}${t.note ? ` (${clean(t.note).slice(0, 40)})` : ""}`).join("; ")}`);
+}
+
+/** Request for rewriting the AI-kept notes from the household's categorization history. Reply = the new notes. */
+export function buildNotesPrompt({ categories, aiNotes, examples, ambiguous }) {
+  const catLines = categories.groups.flatMap((g) => g.categories.map((c) => `${c.id} = ${g.name} > ${c.name}`));
+  const system = [
+    "You maintain short categorization notes for one household's personal finances. Another model reads them to categorize new transactions.",
+    "Write plain markdown bullets, at most about 60 lines. Capture patterns that are NOT obvious from a merchant's name: merchants whose category depends on amount or note, recurring payments, what gets archived (transfers, card payments), trip habits.",
+    "Don't list every merchant (the merchant history is sent separately each time). Keep whatever in the current notes is still true, especially preferences the household stated. Reply with only the notes.",
+  ].join("\n");
+  const user = [
+    `Categories:\n${catLines.join("\n")}\n${ARCHIVE_ID} = hidden (transfers, card payments, not spending)`,
+    `Current AI notes:\n${aiNotes?.trim() || "(none)"}`,
+    `Merchant → usual category ×count:\n${examples.join("\n")}`,
+    ambiguous.length ? `Merchants used for several categories (recent examples):\n${ambiguous.join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
+  return { system, user };
 }
 
 // ---------- rule language ----------

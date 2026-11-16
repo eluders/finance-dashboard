@@ -33,7 +33,8 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
     - `dashboard.js`: hash-routed tabs. `#summary`: net outflow per category per month (split parts count separately, sections at `sectionBreak` groups, cells link to filtered transactions), plus "Edit categories" mode with the drag-to-reorder editor. `#transactions`: filters by account, category or group, and month, with inline note, category and split edits. `#settings`: connection and account colors.
     - `lib/backend.js`: in-page operations, the auto-save timer, the Claude request (the key stays in this module), and the AI run log (localStorage `fd:aiRuns`).
     - `lib/outbox.js`.
-    - `ai-tab.js` + `lib/ai.js`: the AI categorize tab (see below).
+    - `ai-panel.js` + `lib/ai.js`: the AI categorize panel on Transactions, and the `#logs` tab (see below).
+    - `cat-picker.js`: checkbox category picker (group boxes, All/None/All but Archive, per-row "only"), used by the transaction filter and the AI panel. No "All <group>" pseudo-entries: the user wants the bold group rows themselves to be selectable.
   - Edits (note, category, splits, categories doc) never call GitHub directly. `edits.js` applies them in memory, and `outbox.js` buffers them in localStorage. They're flushed as one commit through `store.applyEdits` about 60s after the first unsaved edit, or on "Save now" or tab close.
   - The timer only runs while a tab is open. On load, unflushed edits are overlaid on the GitHub data and then saved.
   - To run it locally, start a static server at the repo root (e.g. `npx serve .`) and open `/web/`.
@@ -55,7 +56,13 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
 4. Return `{ method, transactions: [{date, description, amountCents, status, signSource, rawText, merchantGuess?}], account: {name, last4, type}, balanceCents?, warnings }`.
 5. Add a synthetic fixture test where practical.
 
-## AI categorize (web `#ai` tab)
+## AI categorize (panel on the Transactions tab; sessions logged on `#logs`)
+- Scope = the rows the transaction table's filters show (`shownRows()`), optionally only uncategorized ones. There's no separate date or category scope in the tool, by the user's choice.
+- While reviewing, the table shows only the affected rows, with an "After (AI)" checkbox column. Apply, Discard and Later sit at the top of the panel. Logs show each run's first 5 rows ("Show all N"), with the actions above them.
+- Memory: there are no user-written notes, by the user's choice. The AI keeps `ai-notes.md` in the data repo, which is viewable and editable (collapsed) in the panel.
+  - Each session has a free-text notes box. Unless "One-time only" is ticked, the model may end its reply with `NOTES:` plus the complete updated notes.
+  - The panel shows the update as a +/− line diff, approved together with the category changes. It isn't saved if the notes changed since the run.
+  - "Rebuild from my history" rewrites the notes from merchant history.
 - Called from the page with `fetch` to `https://api.anthropic.com/v1/messages`. It streams, uses API version `2026-10-21`, and sends the header `anthropic-dangerous-direct-browser-access: true`. There's no SDK because the page has no build step.
 - The default model is **`claude-haiku-5-5`**: the user asked for a cheap model. Sonnet and Opus can be picked in Settings. The form shows a token/cost estimate and warns above 100K prompt tokens, where Haiku's price is 5x.
 - Safety model: the AI can only *propose category changes*.
@@ -65,4 +72,4 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
   - Applying is category-only, through `commitEdit`, which keeps note, splits and override. It's skipped if the category changed since the run.
 - The prompt is compact (`ref|date|amount|last4|description|note|category` lines), plus optional "merchant → category ×n" examples drawn from history.
 - The built-in **Archive** category (`ARCHIVE_ID = "archive"`, in `categories.js`) isn't part of the user's groups. Archived transactions are excluded from the summary, and from the transaction list unless the user filters to Archive.
-- Future learning loop: user corrections → `corrections.json` → deterministic `rules.json` entries, plus periodic rewrites of `ai-notes.md`, which goes into the categorization prompt.
+- Possible later: turn `corrections.json` into deterministic `rules.json` entries.

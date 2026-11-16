@@ -153,11 +153,29 @@ test("summary: clicking a cell opens Transactions filtered to that category and 
   sumRow("Groceries").children[1].click();
   await settle();
   assert.equal($("#tab-transactions").hidden, false);
-  assert.equal($("#filterCategory").value, "groceries");
+  const checked = $$("#filterCategory input[data-id]").filter((c) => c.checked).map((c) => c.dataset.id);
+  assert.deepEqual(checked, ["groceries"]);
+  assert.match($("#filterCategory summary").textContent, /Categories: Groceries/);
   assert.equal($("#filterDate").value, "2026-11");
   assert.deepEqual($$("tr.tx").map((r) => r.children[2].textContent), ["SAFEWAY #1439 SANTA CLARA CA"], "split part matches");
-  $("#filterCategory").value = ""; fire($("#filterCategory"), "change");
+  button("#filterCategory", "All but Archive").click();
   $("#filterDate").value = ""; fire($("#filterDate"), "change");
+  assert.equal($$("tr.tx").length, 2);
+});
+
+test("category filter: bold group boxes select a whole group; custom date range", async () => {
+  const groupBox = $$("#filterCategory label.cb.group").find((l) => l.textContent === "Food").querySelector("input");
+  button("#filterCategory", "None").click();
+  assert.equal($$("tr.tx").length, 0);
+  groupBox.checked = true; fire(groupBox, "change");
+  assert.deepEqual($$("#filterCategory input[data-id]").filter((c) => c.checked).map((c) => c.dataset.id), ["groceries", "dining"]);
+  assert.equal($$("tr.tx").length, 1, "SAFEWAY (its groceries part)");
+  button("#filterCategory", "All but Archive").click();
+  $("#filterDate").value = "custom"; fire($("#filterDate"), "change");
+  assert.equal($("#dateRange").hidden, false);
+  $("#dateFrom").value = "2026-11-11"; fire($("#dateFrom"), "change");
+  assert.deepEqual($$("tr.tx").map((r) => r.children[1].textContent), ["11-13-2026"]);
+  $("#dateFrom").value = ""; $("#filterDate").value = ""; fire($("#filterDate"), "change");
   assert.equal($$("tr.tx").length, 2);
 });
 
@@ -278,23 +296,23 @@ test("counted-amount override from the expanded row: struck-through bank amount,
   assert.match(rowOf("SAFEWAY").textContent, /Split · 3/);
 });
 
-test("Archive: hidden from the list and the summary unless filtered to Archive", async () => {
+test("Archive: hidden from the list and the summary unless ticked in the category filter", async () => {
   await go("#transactions");
   const sel = rowOf("NETFLIX").querySelector("select");
   sel.value = "archive"; fire(sel, "change");
   fire($("#search"), "input"); // re-render the list
   assert.equal(rowOf("NETFLIX"), undefined, "hidden by default");
   assert.match($("#count").textContent, /1 archived hidden/);
-  $("#filterCategory").value = "archive"; fire($("#filterCategory"), "change");
-  assert.ok(rowOf("NETFLIX"), "shown when filtering to Archive");
+  const arch = $("#filterCategory input[data-id='archive']");
+  arch.checked = true; fire(arch, "change");
+  assert.ok(rowOf("NETFLIX"), "shown when Archive is ticked");
   assert.ok(rowOf("NETFLIX").querySelector("select").classList.contains("archived"));
-  $("#filterCategory").value = ""; fire($("#filterCategory"), "change");
   await go("#summary");
   assert.equal(sumRow("Archive"), undefined);
   assert.equal(sumCells("Entertainment").join(""), "", "not counted anywhere");
 });
 
-test("AI categorize: scope → Claude → before/after review → apply changes only the category", async () => {
+test("AI categorize panel: scope = table rows → Claude → table review with After column → apply category + notes", async () => {
   await go("#settings");
   $("#sAnthropicKey").value = "sk-test";
   button("#aiSettingsPanel", "Save").click();
@@ -303,44 +321,103 @@ test("AI categorize: scope → Claude → before/after review → apply changes 
   assert.equal($("#sAnthropicKey").value, "", "key not shown back");
   assert.equal($("#sAiModel").value, "claude-haiku-5-5", "cheap model by default");
 
-  await go("#ai");
-  assert.match($("#aiEstimate").textContent, /^0 transactions \(\+1 split, not sent\)/, "default scope: uncategorized only; splits never sent");
-  const archiveBox = $("#aiForm .cat-picker input[data-id='archive']");
-  archiveBox.checked = true; fire(archiveBox, "change");
-  assert.match($("#aiEstimate").textContent, /^1 transaction /);
-  const ta = $("#aiForm textarea");
-  ta.value = "Netflix is a subscription, not archived."; fire(ta, "input");
+  await go("#transactions"); // Archive is still ticked from the previous test, so both rows show
+  assert.equal($$("tr.tx").length, 2);
+  $("#aiOpen").click();
+  await settle();
+  assert.ok(document.body.classList.contains("ai-open"));
+  assert.equal($$("#aiPanel textarea").length, 2, "session notes + (collapsed) AI notes; no user notes");
+  assert.equal($("#aiPanel details.notes-editor").open, false, "AI notes collapsed by default");
+  assert.match($("#aiPanel .notes-editor textarea").value, /Categorization notes/);
+  assert.match($("#aiPanel .ai-scope").textContent, /^0 transactions .* 1 split skipped · 1 already categorized skipped/);
+  const only = [...$$("#aiPanel label.cb")].find((l) => /Only uncategorized/.test(l.textContent)).querySelector("input");
+  only.checked = false; fire(only, "change");
+  await settle();
+  assert.match($("#aiPanel .ai-scope").textContent, /^1 transaction from the table/);
+  $("#aiSession").value = "Netflix is a subscription, not archived. Streaming services are always Subscriptions."; fire($("#aiSession"), "input");
 
-  claude.reply = 'SET subscriptions WHERE text "NETFLIX"  # streaming\nSET bogus WHERE ids 1\n';
+  claude.reply = 'SET subscriptions WHERE text "NETFLIX"  # streaming\nSET bogus WHERE ids 1\n\nNOTES:\n- Streaming services (Netflix etc.) are Subscriptions, never Archive.\n';
   $("#aiRun").click();
   await settle();
   const body = claude.requests.at(-1);
   assert.equal(body.model, "claude-haiku-5-5");
   assert.match(body.messages[0].content, /NETFLIX\.COM/);
   assert.doesNotMatch(body.messages[0].content, /SAFEWAY #1439 SANTA CLARA CA\|/, "split transaction not sent");
-  assert.match(body.messages[0].content, /Netflix is a subscription, not archived\./);
+  assert.match(body.messages[0].content, /My notes for this session:\nNetflix is a subscription/);
+  assert.match(body.messages[0].content, /AI NOTES:\n# Categorization notes/);
 
-  const card = $("#aiLog .ai-run");
-  assert.match(card.querySelector(".pill").textContent, /needs review/);
-  assert.match(card.textContent, /1 line of the reply couldn't be used/);
-  const row = card.querySelector(".ai-table tr");
-  assert.deepEqual([...row.children].slice(1, 7).map((td) => td.textContent), ["11-10-2026", "NETFLIX.COM · family plan", "-$12.99", "Archive", "→", "Subscriptions"]);
-  assert.match(card.querySelector(".ai-rule-head code").textContent, /SET subscriptions WHERE text "NETFLIX"/);
-  assert.equal(await onGitHubCategoryAfterApply(), "subscriptions");
-});
-
-async function onGitHubCategoryAfterApply() {
-  const before = pending();
-  button("#aiLog", "Apply 1 change").click();
+  // review happens in the table: only affected rows, with an After column
+  assert.ok(document.body.classList.contains("reviewing"));
+  assert.equal($("#reviewBanner").hidden, false);
+  assert.deepEqual($$("#txns thead th").map((th) => th.textContent).slice(-2), ["Before", "After (AI)"]);
+  assert.deepEqual($$("tr.tx").map((r) => r.children[2].textContent), ["NETFLIX.COM"]);
+  assert.equal(rowOf("NETFLIX").querySelector("td.after-col").textContent, "Subscriptions");
+  const panelApply = () => [...$$("#aiPanel button")].find((b) => b.textContent.startsWith("Apply"));
+  assert.equal(panelApply().textContent, "Apply 1 change + notes", "approve button at the top of the panel");
+  assert.match($("#aiPanel .notes-diff").textContent, /\+ - Streaming services \(Netflix etc\.\) are Subscriptions/);
+  assert.match($("#aiPanel").textContent, /1 line of the reply couldn't be used/);
+  const after = rowOf("NETFLIX").querySelector("td.after-col input");
+  after.checked = false; fire(after, "change");
   await settle();
-  assert.match($("#aiLog .ai-run .pill").textContent, /applied/);
-  assert.equal(pending(), before, "same transaction's outbox entry is updated");
-  await go("#transactions");
+  assert.equal(panelApply().textContent, "Apply 0 changes + notes");
+  rowOf("NETFLIX").querySelector("td.after-col input").checked = true; fire(rowOf("NETFLIX").querySelector("td.after-col input"), "change");
+  await settle();
+  assert.equal($("#aiSession"), null, "panel shows the review, not the form");
+
+  panelApply().click();
+  await settle();
+  assert.ok(!document.body.classList.contains("reviewing"), "back to the normal table");
   const r = rowOf("NETFLIX");
   assert.equal(r.querySelector("select").value, "subscriptions");
   assert.equal(r.querySelector("input.cell-input").value, "family plan", "note untouched");
-  return outboxNow().tx[Object.keys(outboxNow().tx).find((k) => outboxNow().tx[k].state.note === "family plan")].state.category;
-}
+  assert.match(gh.files().get("ai-notes.md"), /Streaming services \(Netflix etc\.\) are Subscriptions/, "AI notes grew");
+  assert.equal($("#aiSession").value, "", "session notes cleared after the run");
+
+  await go("#logs");
+  const card = $("#logsList .ai-run");
+  assert.match(card.querySelector(".pill").textContent, /applied/);
+  assert.match(card.textContent, /AI notes saved/);
+});
+
+test("one-time only: the AI isn't asked to remember, and NOTES in the reply are ignored", async () => {
+  await go("#transactions");
+  $("#aiOpen").click(); // (already open: no-op)
+  await settle();
+  const oneTime = $("#aiOneTime");
+  oneTime.checked = true; fire(oneTime, "change");
+  $("#aiSession").value = "Archive everything before 2026-11-12."; fire($("#aiSession"), "input");
+  claude.reply = 'SET archive WHERE dates 2000-01-01..2026-11-11\nNOTES:\n- archive old stuff\n';
+  $("#aiRun").click();
+  await settle();
+  const body = claude.requests.at(-1);
+  assert.match(body.system, /one-time only: do NOT write NOTES/);
+  assert.match(body.messages[0].content, /My notes for this session \(one-time only, don't remember them\)/);
+  assert.equal($("#aiPanel .notes-change"), null, "no notes update offered");
+  assert.equal([...$$("#aiPanel button")].find((b) => b.textContent.startsWith("Apply")).textContent, "Apply 1 change");
+  [...$$("#aiPanel button")].find((b) => b.textContent === "Discard").click();
+  await settle();
+  assert.equal(rowOf("NETFLIX").querySelector("select").value, "subscriptions", "discarded: nothing changed");
+  oneTime.checked = false;
+  const o2 = $("#aiOneTime"); o2.checked = false; fire(o2, "change");
+});
+
+test("Logs: long results collapse to the first few rows, actions sit above them", async () => {
+  const proposals = Array.from({ length: 8 }, (_, i) => ({ key: `x/${i}`, date: "2026-11-0" + (i + 1), description: `SHOP ${i}`, note: "", amountCents: -100 * (i + 1), from: null, to: "groceries", rule: 0, selected: true }));
+  const runs = JSON.parse(localStorage.getItem("fd:aiRuns"));
+  runs.unshift({ id: "big", at: new Date().toISOString(), status: "review", model: "claude-haiku-5-5", scope: { label: "all" }, instructions: "", txCount: 8, rules: [{ text: 'SET groceries WHERE text "SHOP"', category: "groceries", matched: 8 }], errors: [], proposals, usage: { input_tokens: 1, output_tokens: 1 }, cost: 0 });
+  localStorage.setItem("fd:aiRuns", JSON.stringify(runs));
+  await go("#summary"); await go("#logs");
+  const card = $("#logsList .ai-run");
+  assert.equal(card.querySelectorAll(".ai-table tr").length, 5);
+  const apply = [...card.querySelectorAll("button")].find((b) => b.textContent === "Apply 8 changes");
+  const table = card.querySelector(".ai-table");
+  assert.ok(apply.compareDocumentPosition(table) & window.Node.DOCUMENT_POSITION_FOLLOWING, "Apply comes before the rows");
+  [...card.querySelectorAll("button")].find((b) => b.textContent === "Show all 8").click();
+  await settle();
+  assert.equal($("#logsList .ai-run").querySelectorAll(".ai-table tr").length, 8);
+  [...$("#logsList .ai-run").querySelectorAll("button")].find((b) => b.textContent === "Discard").click();
+  await settle();
+});
 
 test("Settings tab: connection (token never shown back, can be forgotten) and account colors", async () => {
   await go("#settings");
