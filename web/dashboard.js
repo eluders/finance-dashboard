@@ -4,7 +4,7 @@
 import { fmtMoney, fmtDate, el, accountBadge, accountColor } from "../extension/src/lib/ui.js";
 import { resolveSplits, parseMoneyInput } from "../extension/src/lib/splits.js";
 import { categoryIndex, uniqueId, validateCategories, ARCHIVE_ID, sideOf } from "../extension/src/lib/categories.js";
-import { emptyBudget, budgetEntry, entryMonths, entryAvg, setMonthly, setMonth } from "../extension/src/lib/budget.js";
+import { emptyBudget, budgetEntry, entryMonths, entryAvg, setMonthly, setMonth, rebaseBudget, fyOf, fyPos, fyMonth, fyMonthNames, fyRangeText, DEFAULT_FY_START } from "../extension/src/lib/budget.js";
 import { applyState, editableState, trackedCents } from "../extension/src/lib/edits.js";
 import { onStorageChanged } from "../extension/src/lib/platform.js";
 import { OUTBOX_KEY, pendingCount } from "./lib/outbox.js";
@@ -23,6 +23,9 @@ const rowEls = new Map(); // txn id -> <tr>
 const byId = () => Object.fromEntries(accounts.map((a) => [a.id, a]));
 const newId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 10);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// Financial year: starts in month fyStart() and is named by the year it ends in (Nov 2026 - Oct 2027 = "2027").
+const fyStart = () => budget.fyStart || DEFAULT_FY_START;
+const fyLabel = (date) => fyOf(date, fyStart());
 
 function setStatus(msg, cls = "") { $("status").className = `status ${cls}`; $("status").textContent = msg; }
 
@@ -50,9 +53,32 @@ initCellSelect({
 const VIEW_KEY = "fd:summaryView";
 const view = (() => { try { return { side: "minimize", mode: "actual", ...JSON.parse(localStorage.getItem(VIEW_KEY) || "{}") }; } catch (_) { return { side: "minimize", mode: "actual" }; } })();
 function setView(patch) {
+  const anchor = patch.mode && patch.mode !== view.mode ? summaryAnchor() : null;
   Object.assign(view, patch);
   try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) {}
   renderSummary();
+  if (anchor) restoreSummaryAnchor(anchor);
+}
+
+// Switching Actual <-> Predict keeps your place: the row at the top of the table stays at the top
+// (rows differ in height between the two, so a raw scroll offset would drift).
+const summaryCard = () => document.querySelector("#summaryBody .summary-card");
+function summaryAnchor() {
+  const card = summaryCard();
+  if (!card) return null;
+  const top = card.getBoundingClientRect().top + (card.querySelector("thead")?.offsetHeight || 0);
+  const row = [...card.querySelectorAll("tbody tr[data-key]")].find((tr) => tr.getBoundingClientRect().bottom > top + 1);
+  return { key: row?.dataset.key, off: row ? row.getBoundingClientRect().top - top : 0, scrollTop: card.scrollTop, pageY: window.scrollY };
+}
+function restoreSummaryAnchor(a) {
+  const card = summaryCard();
+  if (!card) return;
+  window.scrollTo(window.scrollX, a.pageY);
+  card.scrollTop = a.scrollTop;
+  const row = a.key && [...card.querySelectorAll("tbody tr[data-key]")].find((tr) => tr.dataset.key === a.key);
+  if (!row) return;
+  const top = card.getBoundingClientRect().top + (card.querySelector("thead")?.offsetHeight || 0);
+  card.scrollTop += row.getBoundingClientRect().top - top - a.off;
 }
 for (const id of ["sumSide", "sumMode"]) for (const b of $(id).querySelectorAll("button")) b.onclick = () => setView({ [id === "sumSide" ? "side" : "mode"]: b.dataset.v });
 
@@ -229,9 +255,23 @@ function sections(groups) {
   for (const g of groups) { if (!out.length || g.sectionBreak) out.push([]); out.at(-1).push(g); }
   return out;
 }
+/** Mixes a group's color with white (a = share of the color) so sticky cells stay opaque. */
+function tint(hex, a) {
+  const n = parseInt(hex.slice(1), 16), mix = (c) => Math.round(c * a + 255 * (1 - a));
+  return `rgb(${mix(n >> 16)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
+}
+/** Colors a summary row by its group: a stripe on the label, the group row tinted, its categories lightly. */
+function paint(tr, g, kind, key) {
+  if (key) tr.dataset.key = key;
+  if (!g?.color) return tr;
+  tr.style.setProperty("background", tint(g.color, kind === "group" ? 0.2 : 0.07), "important"); // beats tr.group-row's default
+  tr.querySelector("td.label").style.boxShadow = `inset 4px 0 0 ${g.color}`;
+  return tr;
+}
 const sideGroups = (side) => cats.groups.filter((g) => sideOf(g) === side);
 
-/** Net outflow in cents per category per month: Map(categoryId | UNCAT -> number[12]). Splits count per part. */
+/** Net outflow in cents per category per month of financial year `year` (index 0 = its first month):
+ *  Map(categoryId | UNCAT -> number[12]). Splits count per part. */
 function monthlyTotals(year, accountId) {
   const sums = new Map();
   const months = new Set();
@@ -242,8 +282,8 @@ function monthlyTotals(year, accountId) {
     a[m] -= cents; // money out (negative) counts as positive spending
   };
   for (const t of txns) {
-    if (!t.date.startsWith(year) || (accountId && t.accountId !== accountId)) continue;
-    const m = +t.date.slice(5, 7) - 1;
+    if (fyLabel(t.date) !== year || (accountId && t.accountId !== accountId)) continue;
+    const m = fyPos(t.date, fyStart());
     months.add(m);
     if (t.splits?.length) for (const s of t.splits) add(s.category, m, s.amountCents);
     else if (trackedCents(t)) add(t.category, m, trackedCents(t));
@@ -267,14 +307,21 @@ function moneyCell(cents, attrs = {}) {
 function fillYearSelect() {
   const ys = $("sumYear");
   const keep = ys.value;
-  const now = new Date().getFullYear();
-  const years = [...new Set([...txns.map((t) => t.date.slice(0, 4)), String(now), String(now + 1), ...Object.keys(budget.years)])].sort().reverse();
+  const current = fyLabel(new Date().toISOString().slice(0, 10));
+  const years = [...new Set([...txns.map((t) => fyLabel(t.date)), current, String(+current + 1), ...Object.keys(budget.years)])].sort().reverse();
   ys.innerHTML = "";
   for (const y of years) ys.append(new Option(y, y));
-  ys.value = years.includes(keep) ? keep : String(now);
+  ys.value = years.includes(keep) ? keep : current;
+  showYearRange();
+}
+
+function showYearRange() {
+  const y = $("sumYear").value;
+  $("sumRange").textContent = y && fyStart() !== 1 ? fyRangeText(y, fyStart()) : "";
 }
 
 function renderSummary() {
+  showYearRange();
   for (const id of ["sumSide", "sumMode"]) {
     $(id).hidden = editingCategories;
     for (const b of $(id).querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === view[id === "sumSide" ? "side" : "mode"]);
@@ -298,7 +345,8 @@ function renderActual(body) {
   const cols = [];
   for (let m = months[0]; m <= months.at(-1); m++) cols.push(m);
   const avgDiv = cols.length;
-  const goto = (category, m) => () => openTransactions({ category, date: m == null ? year : `${year}-${String(m + 1).padStart(2, "0")}`, account: acct });
+  const goto = (category, m) => () => openTransactions({ category, date: m == null ? `fy:${year}` : fyMonth(year, m, fyStart()), account: acct });
+  const names = fyMonthNames(fyStart());
   // Maximize shows the size of each category's flow: income in and giving/investing out both count up.
   const catArr = (id) => { const a = sums.get(id); return a ? (max ? a.map(Math.abs) : a) : Array(12).fill(0); };
   const predOf = (ids) => ids.reduce((s, id) => s + (entryAvg(budgetEntry(budget, year, id)) || 0), 0);
@@ -319,11 +367,11 @@ function renderActual(body) {
     if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: width })));
     for (const g of sec) {
       const ids = g.categories.map((c) => c.id);
-      tbody.append(line(g.name, sumArr(ids.map(catArr)), { cls: "group-row", category: `g:${g.id}`, pred: predOf(ids) }));
-      for (const c of g.categories) tbody.append(line(c.name, catArr(c.id), { cls: "cat-line", category: c.id, pred: predOf([c.id]) }));
+      tbody.append(paint(line(g.name, sumArr(ids.map(catArr)), { cls: "group-row", category: `g:${g.id}`, pred: predOf(ids) }), g, "group", `g:${g.id}`));
+      for (const c of g.categories) tbody.append(paint(line(c.name, catArr(c.id), { cls: "cat-line", category: c.id, pred: predOf([c.id]) }), g, "cat", c.id));
     }
     const ids = sec.flatMap((g) => g.categories.map((c) => c.id));
-    tbody.append(line("Subtotal", sumArr(ids.map(catArr)), { cls: "subtotal-row", pred: predOf(ids) }));
+    tbody.append(paint(line("Subtotal", sumArr(ids.map(catArr)), { cls: "subtotal-row", pred: predOf(ids) }), null, "sub", `sub:${si}`));
   });
   if (!tbody.children.length) tbody.append(el("tr", {}, el("td", { colspan: width, class: "muted" }, `No ${view.side} groups yet. Use Edit categories to drag groups to this side.`)));
   if (!max && sums.has(UNCAT)) {
@@ -332,7 +380,7 @@ function renderActual(body) {
   }
 
   body.append(el("div", { class: "card table-card summary-card" }, el("table", { class: "summary" },
-    el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), cols.map((m) => el("th", { class: "num" }, MONTHS[m])),
+    el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), cols.map((m) => el("th", { class: "num", title: fyMonth(year, m, fyStart()) }, names[m])),
       el("th", { class: "num total" }, "Total"),
       el("th", { class: "num avg", title: `Average over ${avgDiv} month${avgDiv === 1 ? "" : "s"}` }, "Avg / mo"),
       el("th", { class: "num pred", title: "Predicted average per month (from Predict)" }, "Predicted / mo"))),
@@ -344,6 +392,7 @@ function renderActual(body) {
 const centsText = (c) => (c == null ? "" : c % 100 ? (c / 100).toFixed(2) : String(c / 100));
 function renderPredict(body) {
   const year = $("sumYear").value;
+  const names = fyMonthNames(fyStart());
   const catRows = []; // { id, monthly, months: [input×12], total, avg }
   const aggRows = []; // { ids, months: [td×12], total, avg }
   const setTd = (td, cents) => { td.textContent = cents ? dollars(cents) : ""; };
@@ -356,7 +405,7 @@ function renderPredict(body) {
       if (document.activeElement !== r.monthly) r.monthly.value = centsText(e?.monthly ?? null);
       r.months.forEach((inp, m) => {
         inp.readOnly = locked;
-        inp.title = locked ? "Set by the Monthly amount. Clear Monthly to edit single months." : `${MONTHS[m]} ${year}`;
+        inp.title = locked ? "Set by the Monthly amount. Clear Monthly to edit single months." : `${names[m]} ${fyMonth(year, m, fyStart()).slice(0, 4)}`;
         if (document.activeElement !== inp || locked) inp.value = centsText(vals[m]);
       });
       setTd(r.total, vals.reduce((a, v) => a + (v || 0), 0));
@@ -399,7 +448,7 @@ function renderPredict(body) {
       const r = read(monthly, budgetEntry(budget, year, c.id)?.monthly ?? null);
       if (r.ok) commit(setMonthly(budget, year, c.id, r.cents));
     };
-    const months = MONTHS.map((name, m) => {
+    const months = names.map((name, m) => {
       const inp = el("input", { class: "pred-input", inputmode: "decimal", "data-col": String(m), "aria-label": `${c.name} ${name}` });
       inp.onchange = () => {
         if (inp.readOnly) { refresh(); return; }
@@ -415,7 +464,7 @@ function renderPredict(body) {
       months.map((i) => el("td", { class: "pcell" }, i)), row.total, row.avg);
   };
   const aggLine = (label, ids, cls) => {
-    const row = { ids, months: MONTHS.map(() => el("td", { class: "num pred" })), total: el("td", { class: "num pred total" }), avg: el("td", { class: "num pred pred-col" }) };
+    const row = { ids, months: names.map(() => el("td", { class: "num pred" })), total: el("td", { class: "num pred total" }), avg: el("td", { class: "num pred pred-col" }) };
     aggRows.push(row);
     return el("tr", { class: cls }, el("td", { class: "label" }, label), el("td"), row.months, row.total, row.avg);
   };
@@ -424,18 +473,18 @@ function renderPredict(body) {
   sections(sideGroups(view.side)).forEach((sec, si) => {
     if (si > 0) tbody.append(el("tr", { class: "section-gap" }, el("td", { colspan: 16 })));
     for (const g of sec) {
-      tbody.append(aggLine(g.name, g.categories.map((c) => c.id), "group-row"));
-      for (const c of g.categories) tbody.append(catLine(c));
+      tbody.append(paint(aggLine(g.name, g.categories.map((c) => c.id), "group-row"), g, "group", `g:${g.id}`));
+      for (const c of g.categories) tbody.append(paint(catLine(c), g, "cat", c.id));
     }
-    tbody.append(aggLine("Subtotal", sec.flatMap((g) => g.categories.map((c) => c.id)), "subtotal-row"));
+    tbody.append(paint(aggLine("Subtotal", sec.flatMap((g) => g.categories.map((c) => c.id)), "subtotal-row"), null, "sub", `sub:${si}`));
   });
   if (!tbody.children.length) tbody.append(el("tr", {}, el("td", { colspan: 16, class: "muted" }, `No ${view.side} groups yet. Use Edit categories to drag groups to this side.`)));
 
   body.append(
-    el("div", { class: "muted", style: "margin:-4px 0 8px" }, `Predicted amounts for ${year}. A Monthly amount fills every month. Leave it blank to enter single months instead (one-offs); the average is their total over 12 months.`),
+    el("div", { class: "muted", style: "margin:-4px 0 8px" }, `Predicted amounts for ${year} (${fyRangeText(year, fyStart())}). A Monthly amount fills every month. Leave it blank to enter single months instead (one-offs); the average is their total over 12 months.`),
     el("div", { class: "card table-card summary-card" }, el("table", { class: "summary predict" },
       el("thead", {}, el("tr", {}, el("th", { class: "label" }, "Category"), el("th", { class: "num pred" }, "Monthly"),
-        MONTHS.map((m) => el("th", { class: "num" }, m)), el("th", { class: "num total" }, "Total"), el("th", { class: "num pred" }, "Avg / mo"))),
+        names.map((m) => el("th", { class: "num" }, m)), el("th", { class: "num total" }, "Total"), el("th", { class: "num pred" }, "Avg / mo"))),
       tbody)));
   refresh();
 }
@@ -479,10 +528,13 @@ function fillDateFilter() {
   sel.innerHTML = "";
   sel.append(new Option("All dates", ""), new Option("Custom range…", "custom"));
   const months = [...new Set(txns.map((t) => t.date.slice(0, 7)))].sort().reverse();
-  let year = null;
+  let fy = null;
   for (const ym of months) {
-    if (ym.slice(0, 4) !== year) { year = ym.slice(0, 4); sel.append(new Option(`All of ${year}`, year)); }
-    sel.append(new Option(`${MONTHS[+ym.slice(5) - 1]} ${year}`, ym));
+    if (fyLabel(ym) !== fy) {
+      fy = fyLabel(ym);
+      sel.append(new Option(fyStart() === 1 ? `All of ${fy}` : `All of ${fy} (${fyRangeText(fy, fyStart())})`, `fy:${fy}`));
+    }
+    sel.append(new Option(`${MONTHS[+ym.slice(5) - 1]} ${ym.slice(0, 4)}`, ym));
   }
   sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
   $("dateRange").hidden = sel.value !== "custom";
@@ -490,6 +542,7 @@ function fillDateFilter() {
 
 function inDates(t) {
   const v = $("filterDate").value;
+  if (v.startsWith("fy:")) return fyLabel(t.date) === v.slice(3);
   if (v !== "custom") return t.date.startsWith(v);
   const from = $("dateFrom").value, to = $("dateTo").value;
   return (!from || t.date >= from) && (!to || t.date <= to);
@@ -886,6 +939,10 @@ function drawCategoryEditor() {
   const groupEl = (g, gi) => {
     const gname = el("input", { class: "cat-group-name", value: g.name });
     gname.oninput = () => { g.name = gname.value; markDirty(); };
+    const color = el("input", { type: "color", class: "group-color", value: g.color || "#9aa0ad", title: "Group color (used on the Summary)" });
+    color.oninput = () => { g.color = color.value; gEl.style.setProperty("--gc", g.color); gEl.classList.add("colored"); noColor.hidden = false; markDirty(); };
+    const noColor = el("button", { class: "icon", title: "No color", hidden: !g.color }, "No color");
+    noColor.onclick = () => { delete g.color; drawCategoryEditor(); };
     const addCat = el("button", {}, "+ Category");
     addCat.onclick = () => { g.categories.push({ id: uniqueId("new_category", allIds()), name: "New category" }); drawCategoryEditor(); };
     const brk = el("button", { class: `icon break-toggle${g.sectionBreak ? " on" : ""}`, title: "Start a new section (with its own total) at this group", disabled: gi === 0 }, "Section break");
@@ -911,8 +968,8 @@ function drawCategoryEditor() {
     }));
     if (!g.categories.length) list.append(el("div", { class: "muted cat-empty" }, "Drag categories here"));
 
-    const gEl = el("div", { class: `cat-group${g.sectionBreak && gi > 0 ? " section-start" : ""}` });
-    gEl.append(el("div", { class: "row" }, dragHandle(gEl, "group"), gname, addCat, brk, delGroup), list);
+    const gEl = el("div", { class: `cat-group${g.sectionBreak && gi > 0 ? " section-start" : ""}${g.color ? " colored" : ""}`, style: g.color ? `--gc: ${g.color}` : null });
+    gEl.append(el("div", { class: "row" }, dragHandle(gEl, "group"), color, gname, addCat, brk, delGroup, noColor), list);
     groupOf.set(gEl, g);
     // a category dragged anywhere over a group (even an empty one, on either side) lands in that group's list
     gEl.addEventListener("dragover", (e) => { if (drag?.kind === "cat") { list.querySelector(".cat-empty")?.remove(); dropInto(list, ".cat-row", e); } });
@@ -966,8 +1023,36 @@ function drawCategoryEditor() {
 function renderSettings() {
   renderConnection();
   renderAiSettings();
+  renderYearSettings();
   renderAccounts();
   renderBackup();
+}
+
+function renderYearSettings() {
+  const box = $("yearPanel");
+  box.innerHTML = "";
+  const sel = el("select", { id: "sFyStart" }, MONTHS.map((m, i) => el("option", { value: String(i + 1) }, m)));
+  sel.value = String(fyStart());
+  const example = el("div", { class: "muted", style: "margin-top:6px" });
+  const showExample = () => {
+    const cur = fyLabel(new Date().toISOString().slice(0, 10));
+    example.textContent = fyStart() === 1 ? `Calendar years: this year is ${cur}.` : `This year is ${cur}: ${fyRangeText(cur, fyStart())}. A year is named by the year it ends in.`;
+  };
+  sel.onchange = () => {
+    budget = rebaseBudget(budget, +sel.value); // predicted single months stay in their calendar month
+    queueOp({ type: "budget", doc: budget });
+    $("sumYear").value = "";
+    fillYearSelect();
+    fillDateFilter();
+    showExample();
+  };
+  showExample();
+  box.append(
+    el("h2", { style: "margin-top:0" }, "Financial year"),
+    el("div", { class: "muted" }, "The Summary and Predict views run over a financial year, and the transaction date filter offers whole financial years. Saved in your data repo."),
+    el("div", { class: "settings-grid" }, el("div", {}, el("label", { for: "sFyStart" }, "Starts in"), sel)),
+    example,
+  );
 }
 
 function renderBackup() {

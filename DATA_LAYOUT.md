@@ -7,11 +7,11 @@ accounts.json                     { accounts: [Account] }
 transactions/<accountId>/<YYYY>.json   { accountId, year, transactions: [Transaction] }  (newest first)
 balances.json                     { snapshots: [{accountId, date, balanceCents, source}] }   → net worth
 imports.json                      { imports: [{id, accountId, at, added, updated, removed, duplicates, extractorId, url, ...}] }
-categories.json                   v2: { version: 2, groups: [{id, name, side?: "maximize", sectionBreak?, categories: [{id, name}]}] }  (side absent = minimize)  (array order = display order; sectionBreak starts a new block with its own subtotal in the summary; v1 flat lists migrate on read)
+categories.json                   v2: { version: 2, groups: [{id, name, side?: "maximize", color?: "#rrggbb", sectionBreak?, categories: [{id, name}]}] }  (side absent = minimize)  (array order = display order; sectionBreak starts a new block with its own subtotal in the summary; v1 flat lists migrate on read)
 rules.json                        { rules: [...] }          deterministic merchant → category rules (learned)
 corrections.json                  { corrections: [...] }    user overrides of AI categories (training signal)
 ai-notes.md                       categorizer's self-maintained notes
-budget.json                       { version: 1, years: { "YYYY": { <categoryId>: { monthly: cents } | { months: [cents|null ×12] } } } }  predicted amounts (positive cents); avg = monthly, or sum(months)/12
+budget.json                       { version: 1, fyStart: 11, years: { "YYYY": { <categoryId>: { monthly: cents } | { months: [cents|null ×12] } } } }  predicted amounts (positive cents); avg = monthly, or sum(months)/12. Years are financial years named by their END year (fyStart 11: "2027" = Nov 2026–Oct 2027); months[0] = first month of that year
 ```
 
 Planned: `holdings/<accountId>.json` (positions snapshots), `investment-transactions/…`, `targets.json` (allocation targets for DCA).

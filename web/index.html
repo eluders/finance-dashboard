@@ -39,7 +39,8 @@
         <div class="seg" id="sumMode" role="group" title="Actual spending, or your predicted amounts">
           <button data-v="actual">Actual</button><button data-v="predict">Predict</button>
         </div>
-        <select id="sumYear" title="Year"></select>
+        <select id="sumYear" title="Financial year (named by the year it ends in)"></select>
+        <span id="sumRange" class="muted"></span>
         <select id="sumAccount" title="Account"><option value="">All accounts</option></select>
         <div class="spacer"></div>
         <button id="editCategories">Edit categories</button>
@@ -70,6 +71,7 @@
     <section id="tab-settings" hidden>
       <div id="settingsPanel" class="card"></div>
       <div id="aiSettingsPanel" class="card"></div>
+      <div id="yearPanel" class="card"></div>
       <div id="accountPanel" class="card"></div>
       <div id="backupPanel" class="card"></div>
     </section>

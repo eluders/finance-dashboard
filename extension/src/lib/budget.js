@@ -4,17 +4,71 @@
 // the flow for maximize ones (income, giving, investing).
 // `monthly` fills every month and locks them. Without it, individual months are entered and the
 // average is their sum over 12, so a one-off (a trip in June) spreads across the year.
+//
+// Years are FINANCIAL years. `fyStart` (1-12) is the month a financial year starts; a year is named by
+// the calendar year it ENDS in (fyStart 11: "2027" = Nov 2026 - Oct 2027). `months` is in financial
+// order: index 0 is the first month of the financial year.
 export const BUDGET_FILE = "budget.json";
-export const emptyBudget = () => ({ version: 1, years: {} });
+export const DEFAULT_FY_START = 11; // November
+export const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export const emptyBudget = () => ({ version: 1, fyStart: DEFAULT_FY_START, years: {} });
+
+// ---------- financial years ----------
+/** Financial-year label ("2027") for a "YYYY-MM[-DD]" date. */
+export function fyOf(date, start) {
+  const y = +date.slice(0, 4), m = +date.slice(5, 7);
+  return String(start > 1 && m >= start ? y + 1 : y);
+}
+/** Position (0-11) of a date's month inside its financial year. */
+export const fyPos = (date, start) => (+date.slice(5, 7) - start + 12) % 12;
+/** "YYYY-MM" of position `pos` in financial year `label`. */
+export function fyMonth(label, pos, start) {
+  const m = ((start - 1 + pos) % 12) + 1;
+  const y = start > 1 && m >= start ? +label - 1 : +label;
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+/** Month names in financial order. */
+export const fyMonthNames = (start) => MONTH_NAMES.map((_, i) => MONTH_NAMES[(start - 1 + i) % 12]);
+/** "Nov 2026 – Oct 2027" */
+export function fyRangeText(label, start) {
+  const a = fyMonth(label, 0, start), b = fyMonth(label, 11, start);
+  return `${MONTH_NAMES[+a.slice(5) - 1]} ${a.slice(0, 4)} – ${MONTH_NAMES[+b.slice(5) - 1]} ${b.slice(0, 4)}`;
+}
+
+/**
+ * Re-files predictions for a new financial-year start. Single months keep their calendar month
+ * (a June trip stays in June); a Monthly amount stays on its year's label.
+ */
+export function rebaseBudget(doc, newStart) {
+  const old = doc.fyStart || 1;
+  if (old === newStart) return { ...doc, fyStart: newStart };
+  const next = { version: 1, fyStart: newStart, years: {} };
+  const entries = Object.entries(doc.years || {}).flatMap(([label, cats]) => Object.entries(cats).map(([id, e]) => ({ label, id, e })));
+  for (const { label, id, e } of entries) if (e.monthly != null) (next.years[label] ||= {})[id] = { monthly: e.monthly };
+  for (const { label, id, e } of entries) {
+    if (e.monthly != null) continue;
+    e.months.forEach((v, pos) => {
+      if (v == null) return;
+      const ym = fyMonth(label, pos, old);
+      const yr = (next.years[fyOf(ym, newStart)] ||= {});
+      const target = (yr[id] ||= { months: Array(12).fill(null) });
+      if (target.months) target.months[fyPos(ym, newStart)] = v;
+    });
+  }
+  return next;
+}
 
 export function normalizeBudget(doc) {
-  return doc?.version === 1 && doc.years && typeof doc.years === "object" ? doc : emptyBudget();
+  if (!(doc?.version === 1 && doc.years && typeof doc.years === "object")) return emptyBudget();
+  // written before financial years existed: those were calendar years
+  return doc.fyStart ? doc : rebaseBudget({ ...doc, fyStart: 1 }, DEFAULT_FY_START);
 }
 
 const isCents = (v) => Number.isInteger(v) && v >= 0;
 
 export function validateBudget(doc) {
   if (doc?.version !== 1 || !doc.years || typeof doc.years !== "object") throw new Error("Bad budget document.");
+  if (doc.fyStart != null && !(Number.isInteger(doc.fyStart) && doc.fyStart >= 1 && doc.fyStart <= 12)) throw new Error("Bad financial-year start month.");
   for (const [year, cats] of Object.entries(doc.years)) {
     if (!/^\d{4}$/.test(year)) throw new Error(`Bad budget year "${year}".`);
     for (const [id, e] of Object.entries(cats)) {

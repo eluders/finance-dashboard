@@ -630,6 +630,64 @@ test("Minimize/Maximize: editor columns with cross-side drag; summary toggle; Pr
   button("#sumSide", "Minimize").click();
 });
 
+test("financial year: Nov–Oct by default, named by the year it ends in; adjustable in Settings; group colors", async () => {
+  await go("#summary");
+  if (!$("#sumMode button.on") || $("#sumMode button.on").dataset.v !== "actual") button("#sumMode", "Actual").click();
+  $("#sumYear").value = "2027"; fire($("#sumYear"), "change");
+  assert.equal($("#sumRange").textContent, "Nov 2026 – Oct 2027", "Nov 2026 transactions belong to 2027");
+  assert.equal($$("#summaryBody thead th")[1].textContent, "Nov");
+  assert.ok(sumRow("Subscriptions").children[1].textContent, "November spending shows under 2027");
+  assert.ok(sumRow("Subscriptions").dataset.key === "subscriptions", "rows are keyed (keeps your place across Actual/Predict)");
+  button("#sumMode", "Predict").click();
+  assert.deepEqual($$("#summaryBody thead th").slice(2, 5).map((th) => th.textContent), ["Nov", "Dec", "Jan"]);
+  assert.match($("#summaryBody").textContent, /Predicted amounts for 2027 \(Nov 2026 – Oct 2027\)/);
+  button("#sumMode", "Actual").click();
+
+  // clicking a cell / the year filters Transactions by the financial year
+  sumRow("Subscriptions").querySelector("td.label a").click();
+  await settle();
+  assert.equal($("#filterDate").value, "fy:2027");
+  assert.match($("#filterDate").selectedOptions[0].textContent, /All of 2027 \(Nov 2026 – Oct 2027\)/);
+  assert.ok($$("tr.tx").length >= 1);
+  button("#filterCategory", "All but Archive").click();
+  $("#filterDate").value = ""; fire($("#filterDate"), "change");
+
+  // Settings: start in January = calendar years; predictions keep their calendar months
+  const before = structuredClone(outboxNow().budget?.doc);
+  await go("#settings");
+  assert.equal($("#sFyStart").value, "11");
+  assert.match($("#yearPanel").textContent, /This year is \d{4}: Nov \d{4} – Oct \d{4}/);
+  $("#sFyStart").value = "1"; fire($("#sFyStart"), "change");
+  await settle();
+  const cal = outboxNow().budget.doc;
+  assert.equal(cal.fyStart, 1);
+  assert.equal(cal.years["2026"].travel.months[10], 40000, "Nov 2026's prediction is now in calendar 2026, still November");
+  assert.equal(cal.years["2027"].travel.months[0], 10000);
+  await go("#summary");
+  $("#sumYear").value = "2026"; fire($("#sumYear"), "change");
+  assert.equal($("#sumRange").textContent, "", "calendar years need no range");
+  assert.equal($$("#summaryBody thead th")[1].textContent, "Nov");
+  await go("#settings");
+  $("#sFyStart").value = "11"; fire($("#sFyStart"), "change");
+  await settle();
+  if (before) assert.deepEqual(outboxNow().budget.doc, { ...before, fyStart: 11 }, "round trip");
+
+  // group colors: picked in Edit categories, shown on the Summary
+  await go("#summary");
+  $("#editCategories").click();
+  const firstGroup = $("#summaryBody .cat-group");
+  const gname = firstGroup.querySelector(".cat-group-name").value;
+  const color = firstGroup.querySelector("input.group-color");
+  color.value = "#cc3300"; fire(color, "input");
+  assert.equal(firstGroup.querySelector("button[title='No color']").hidden, false);
+  button("#summaryBody", "Save categories").click();
+  const gRow = sumRow(gname);
+  assert.match(gRow.style.background, /rgb\(245, 214, 204\)/, "group row tinted (20% of the color)");
+  assert.match(gRow.querySelector("td.label").style.boxShadow, /204, 51, 0|#cc3300/i);
+  await settle();
+  assert.equal(outboxNow().categories.doc.groups.find((g) => g.name === gname).color, "#cc3300");
+});
+
 test("Settings → Export all data: a zip of every data-repo file + browser state, saved first, no secrets", async () => {
   const { inflateRawSync } = await import("node:zlib");
   const unzip = (buf) => { // reads the central directory

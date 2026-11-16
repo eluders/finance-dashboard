@@ -1,5 +1,5 @@
 // Category taxonomy: ordered groups, each with ordered categories.
-//   categories.json v2: { version: 2, groups: [{ id, name, side?, sectionBreak?, categories: [{ id, name }] }] }
+//   categories.json v2: { version: 2, groups: [{ id, name, side?, color?, sectionBreak?, categories: [{ id, name }] }] }
 //   side: "minimize" (default; spending) or "maximize" (income, giving, saving, investing). Categories take their group's side.
 // Category ids are stable (renames don't touch transactions). v1 (flat list with `group`) is migrated on read.
 //
@@ -49,6 +49,7 @@ export function validateCategories(doc) {
   const ids = new Set();
   for (const g of doc.groups) {
     if (!g.name?.trim()) throw new Error("Every group needs a name.");
+    if (g.color != null && !/^#[0-9a-f]{6}$/i.test(g.color)) throw new Error(`Group "${g.name}" has a bad color "${g.color}".`);
     if (g.side != null && !SIDES.includes(g.side)) throw new Error(`Group "${g.name}" has an unknown side "${g.side}".`);
     for (const c of g.categories) {
       if (!c.name?.trim()) throw new Error(`A category in "${g.name}" has no name.`);

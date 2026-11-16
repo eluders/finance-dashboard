@@ -244,3 +244,9 @@ table.summary.predict .group-row .pred, table.summary.predict .subtotal-row .pre
 .cat-side .cat-groups:has(.cat-empty-side) { border: 2px dashed var(--line); display: grid; place-items: center; }
 .cat-side .cat-group-name { width: 180px; }
 @media (max-width: 1000px) { .cat-sides { grid-template-columns: 1fr; } }
+
+/* group colors (Edit categories) */
+.group-color { width: 30px; height: 28px; padding: 2px; border-radius: 6px; cursor: pointer; flex: none; }
+.cat-group.colored .cat-group-name { border-left: 4px solid var(--gc); }
+.cat-group.colored .cat-list { border-left: 2px solid var(--gc); padding-left: 6px; margin-left: 22px; }
+#sumRange { font-size: 13px; }
