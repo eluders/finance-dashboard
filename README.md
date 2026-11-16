@@ -42,6 +42,13 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
   - **Bulk categories**:
     - On Transactions, drag down the Category column (the blank strip left of each dropdown) to select several rows. Shift-click extends the selection and Ctrl-click adds a single row.
     - Ctrl+C copies a category and Ctrl+V pastes it into everything selected, instantly. Delete clears, Ctrl+Z undoes, Esc clears the selection.
+
+## Privacy and safety
+
+- The extension uses `activeTab`, so it can only see a bank page when you click its button. It has no standing access to any bank site.
+- Content scripts only read the DOM. They never click, type or submit anything.
+- **No financial data ever goes into this code repo or onto the Pages site.** The site is only code. Your transactions are fetched from the private data repo by your browser, using your token.
+- Your token is stored in browser storage: `chrome.storage.local` for the extension and `localStorage` for the dashboard site. It is never written to a repo.
   - On the web, every Pages site under your `github.io` address shares that storage. Don't host untrusted pages there.
   - Use a fine-grained token limited to the data repo. **Forget token** in Settings removes it from the browser.
 - The dashboard's Content-Security-Policy only lets the page talk to `api.github.com` and `api.anthropic.com`. AI categorize sends only the transactions you select: date, amount, description, note and category.
