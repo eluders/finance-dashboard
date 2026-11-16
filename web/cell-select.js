@@ -1,29 +1,26 @@
-// Excel-style multi-select on the Category column of the transaction table.
-//   click            opens that row's category dropdown (and selects the cell)
-//   drag             selects a range of rows (start on a category cell, move up/down)
-//   shift-click      extends the range from the last clicked cell
-//   ctrl/cmd-click   adds or removes one cell
-//   Ctrl+C / Ctrl+V  copies the clicked cell's category / pastes it into every selected cell
-//   Delete           sets the selected cells to Uncategorized
-//   Ctrl+Z           undoes the last bulk change;  Esc clears the selection
-// A bar at the bottom shows the count and offers the same actions with the mouse. Split transactions
-// are skipped (their categories live on the split parts).
-import { el } from "../extension/src/lib/ui.js";
+// Excel-style multi-select on the Category column of the transaction table. No toolbars or
+// prompts: everything happens in place.
+//   click the dropdown   opens it (and selects that cell)
+//   click the blank strip / drag   selects; drag up or down to select a range
+//   shift-click          extends the range from the last clicked cell
+//   ctrl/cmd-click       adds or removes one cell
+//   Ctrl+C               copies the clicked cell's category (it gets a dashed outline)
+//   Ctrl+V               pastes it into every selected cell, instantly (cells flash)
+//   Delete               sets the selected cells to Uncategorized
+//   Ctrl+Z               undoes the last paste/delete;   Esc clears the selection and the copy
+// Split transactions are skipped (their categories live on the split parts).
 
 let ctx = null;
 let sel = new Set();  // selected transaction ids
 let anchor = null;    // last clicked id (for shift-click)
-let drag = null;      // { start, moved, td }
-let clip = null;      // { category, name }
-let undo = null;      // { items: [{ t, before }], label }
-let note = "";        // short feedback shown in the bar
+let drag = null;      // { start, moved, td, onSelect }
+let clip = null;      // { id, category } of the copied cell
+let undo = null;      // [{ t, before }] of the last bulk change
 
 export const isSelected = (id) => sel.has(id);
+export const isCopied = (id) => clip?.id === id;
 
-/**
- * ctx: { rows() → displayed transactions in order, isActive() → bool, setCategory(t, category),
- *        catName(id), catOptionsHtml() }
- */
+/** ctx: { rows() → displayed transactions in order, isActive() → bool, setCategories([{ t, category }]) } */
 export function initCellSelect(c) {
   ctx = c;
   const root = document.getElementById("txns");
@@ -32,10 +29,10 @@ export function initCellSelect(c) {
   document.addEventListener("mouseup", onUp);
   document.addEventListener("mousemove", autoscroll);
   document.addEventListener("keydown", onKey);
-  // clicking anywhere else (not the table's category cells or the bar) clears the selection
+  // clicking anywhere else clears the selection (the copied cell stays copied, like Excel)
   document.addEventListener("mousedown", (e) => {
-    if (!sel.size || e.target.closest?.("#txns td.cat-cell, #selBar")) return;
-    clear();
+    if (!sel.size || e.target.closest?.("#txns td.cat-cell")) return;
+    sel = new Set(); anchor = null; render();
   });
 }
 
@@ -49,12 +46,11 @@ function onDown(e) {
   e.preventDefault(); // keep the native dropdown closed for now: this may become a drag
   // a previously clicked dropdown must not keep focus (arrow keys would silently change that row)
   if (document.activeElement?.matches?.("select, input")) document.activeElement.blur();
-  note = "";
   if (e.shiftKey && anchor) { selectRange(anchor, id, e.ctrlKey || e.metaKey); return; }
   if (e.ctrlKey || e.metaKey) { if (sel.has(id)) sel.delete(id); else sel.add(id); anchor = id; render(); return; }
   sel = new Set([id]);
   anchor = id;
-  drag = { start: id, moved: false, td };
+  drag = { start: id, moved: false, td, onControl: !!e.target.closest("select, button") };
   render();
 }
 
@@ -70,10 +66,10 @@ function onUp() {
   if (!drag) return;
   const d = drag;
   drag = null;
-  if (d.moved) return;
-  // a plain click: behave like a normal dropdown
+  if (d.moved || !d.onControl) return; // a drag, or a click on the blank strip: just select
+  // a plain click on the dropdown: behave like a normal dropdown
   const s = d.td.querySelector("select");
-  if (s) { s.focus(); try { s.showPicker?.(); } catch (_) { /* not allowed here: the focused select still works by keyboard */ } }
+  if (s) { s.focus(); try { s.showPicker?.(); } catch (_) { /* the focused select still works by keyboard */ } }
   // (a split pill is a button: its own click handler still runs)
 }
 
@@ -94,93 +90,64 @@ function selectRange(a, b, add = false) {
 }
 
 function onKey(e) {
-  if (!ctx.isActive() || !sel.size) return;
+  if (!ctx.isActive()) return;
   const ae = document.activeElement;
   if (ae && (ae.tagName === "TEXTAREA" || (ae.tagName === "INPUT" && ae.type !== "checkbox"))) return; // typing a note
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
+  if (e.key === "Escape") { sel = new Set(); clip = null; render(); return; }
+  if (mod && k === "z" && undo) { e.preventDefault(); doUndo(); return; }
+  if (!sel.size) return;
   if (mod && k === "c") { e.preventDefault(); copy(); }
-  else if (mod && k === "v") { e.preventDefault(); paste(); }
-  else if (mod && k === "z" && undo) { e.preventDefault(); doUndo(); }
+  else if (mod && k === "v") { e.preventDefault(); if (clip) assign(clip.category); }
   else if (e.key === "Delete" || (e.key === "Backspace" && sel.size > 1)) { e.preventDefault(); assign(null); }
-  else if (e.key === "Escape") clear();
 }
 
 const selectedTxns = () => ctx.rows().filter((t) => sel.has(t.id));
 
-export function copy() {
+function copy() {
   const src = ctx.rows().find((t) => t.id === anchor && sel.has(t.id)) || selectedTxns()[0];
-  if (!src) return;
-  if (src.splits?.length) { note = "A split transaction has no single category to copy."; render(); return; }
-  clip = { category: src.category || null, name: ctx.catName(src.category || null) };
-  navigator.clipboard?.writeText?.(clip.name).catch(() => {}); // handy for pasting into a spreadsheet
-  note = `Copied "${clip.name}"`;
+  if (!src || src.splits?.length) return;
+  clip = { id: src.id, category: src.category || null };
   render();
 }
 
-export function paste() {
-  if (!clip) { note = "Copy a category first (click a cell, Ctrl+C)."; render(); return; }
-  assign(clip.category);
-}
-
-/** Sets every selected (non-split) transaction to `category`, remembering the old values for Undo. */
-export function assign(category) {
-  const items = [];
-  let splits = 0;
-  for (const t of selectedTxns()) {
-    if (t.splits?.length) { splits++; continue; }
-    if ((t.category || null) === category) continue;
-    items.push({ t, before: t.category || null });
-    ctx.setCategory(t, category);
-  }
-  const name = ctx.catName(category);
-  undo = items.length ? { items, label: `Set ${items.length} to ${name}` } : undo;
-  note = `${items.length ? `Set ${items.length} to ${name}` : "Nothing to change"}${splits ? ` · ${splits} split skipped` : ""}`;
+/** Sets every selected (non-split) transaction to `category` in one batch, remembering old values for Undo. */
+function assign(category) {
+  const items = selectedTxns().filter((t) => !t.splits?.length && (t.category || null) !== category);
+  if (!items.length) return;
+  undo = items.map((t) => ({ t, before: t.category || null }));
+  ctx.setCategories(items.map((t) => ({ t, category })));
   render();
+  flash(items.map((t) => t.id));
 }
 
 function doUndo() {
   const u = undo;
   undo = null;
-  for (const { t, before } of u.items) ctx.setCategory(t, before);
-  note = `Undid: ${u.label}`;
+  ctx.setCategories(u.map(({ t, before }) => ({ t, category: before })));
   render();
+  flash(u.map(({ t }) => t.id));
 }
 
-export function clear() {
-  sel = new Set();
-  anchor = null;
-  note = "";
-  render();
+/** Brief highlight on cells that just changed. */
+function flash(ids) {
+  const set = new Set(ids);
+  for (const tr of document.querySelectorAll("#txns tr.tx")) {
+    if (!set.has(tr.dataset.id)) continue;
+    const td = tr.querySelector("td.cat-cell");
+    td?.classList.remove("flash"); void td?.offsetWidth; td?.classList.add("flash");
+  }
 }
 
-/** Re-applies highlight classes (after any re-render) and draws the bar. */
+/** Re-applies highlight classes (after any re-render). */
 export function render() {
   if (!ctx) return;
   const shown = new Set(ctx.rows().map((t) => t.id));
   for (const id of [...sel]) if (!shown.has(id)) sel.delete(id); // filtered out
-  for (const tr of document.querySelectorAll("#txns tr.tx")) tr.querySelector("td.cat-cell")?.classList.toggle("selected", sel.has(tr.dataset.id));
-  drawBar();
-}
-
-function drawBar() {
-  let bar = document.getElementById("selBar");
-  if (!bar) { bar = el("div", { id: "selBar", class: "sel-bar" }); document.body.append(bar); }
-  const active = ctx.isActive() && (sel.size || undo);
-  bar.hidden = !active;
-  if (!active) return;
-  bar.innerHTML = "";
-  const set = document.createElement("select");
-  set.innerHTML = `<option value="__none" disabled selected>Set category…</option>${ctx.catOptionsHtml()}`;
-  set.onchange = () => assign(set.value || null);
-  const btn = (text, on, attrs = {}) => Object.assign(el("button", attrs, text), { onclick: on });
-  bar.append(...[
-    el("b", {}, `${sel.size} selected`),
-    sel.size ? set : null,
-    sel.size ? btn("Copy", copy, { title: "Ctrl+C: copy the clicked cell's category" }) : null,
-    sel.size ? btn(clip ? `Paste "${clip.name}"` : "Paste", paste, { title: "Ctrl+V", disabled: !clip }) : null,
-    undo ? btn("Undo", doUndo, { title: `Ctrl+Z: ${undo.label}` }) : null,
-    note ? el("span", { class: "sel-note" }, note) : el("span", { class: "muted small" }, "Drag to select · Shift/Ctrl-click · Ctrl+C / Ctrl+V · Del clears"),
-    btn("✕", () => { undo = null; clear(); }, { class: "icon", title: "Clear selection (Esc)" }),
-  ].filter(Boolean));
+  for (const tr of document.querySelectorAll("#txns tr.tx")) {
+    const td = tr.querySelector("td.cat-cell");
+    td?.classList.toggle("selected", sel.has(tr.dataset.id));
+    td?.classList.toggle("copied", clip?.id === tr.dataset.id);
+  }
 }

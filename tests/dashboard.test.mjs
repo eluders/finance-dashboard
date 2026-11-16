@@ -419,7 +419,7 @@ test("Logs: long results collapse to the first few rows, actions sit above them"
   await settle();
 });
 
-test("Category column: click opens the dropdown; drag selects; Ctrl+C / Ctrl+V; bar; Undo; Delete; shift/ctrl-click", async () => {
+test("Category column: blank strip + drag select; instant Ctrl+C / Ctrl+V with no bar; Undo; Delete; shift/ctrl-click", async () => {
   await store.commitImport({
     accountId: acct.id, updates: [], removeIds: [], meta: {},
     add: [
@@ -436,36 +436,35 @@ test("Category column: click opens the dropdown; drag selects; Ctrl+C / Ctrl+V; 
   const key = (k, opts = {}) => document.dispatchEvent(new window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...opts }));
   const coffees = () => ["COFFEE ONE", "COFFEE TWO", "COFFEE THREE"].map((d) => rowOf(d).querySelector("select").value);
 
-  // a plain click still behaves like a dropdown (focused, ready to pick) and selects that one cell
-  const nfSelect = cell("NETFLIX").querySelector("select");
+  // a plain click on the dropdown still opens it (focused) and selects that cell
   const down = new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
-  nfSelect.dispatchEvent(down);
+  cell("NETFLIX").querySelector("select").dispatchEvent(down);
   assert.equal(down.defaultPrevented, true, "native dropdown held back until we know it isn't a drag");
   mouse(document.body, "mouseup");
   assert.equal(document.activeElement, cell("NETFLIX").querySelector("select"));
-  assert.equal($$("#txns td.cat-cell.selected").length, 1);
   key("c", { ctrlKey: true });
-  assert.match($("#selBar").textContent, /Copied "Subscriptions"/);
+  assert.ok(cell("NETFLIX").classList.contains("copied"), "copied cell is outlined");
 
-  // drag down the column
+  // clicking the blank strip (the cell itself, not the dropdown) only selects
+  mouse(cell("COFFEE ONE"), "mousedown"); mouse(document.body, "mouseup");
+  assert.notEqual(document.activeElement?.tagName, "SELECT", "no dropdown from the blank strip");
+  assert.equal($$("#txns td.cat-cell.selected").length, 1);
+
+  // drag down the column, then paste: instant, no toolbar or prompt
   mouse(cell("COFFEE ONE"), "mousedown");
   mouse(cell("COFFEE TWO"), "mouseover");
   mouse(rowOf("COFFEE THREE").children[2], "mouseover"); // anywhere on the row counts
   mouse(document.body, "mouseup");
   assert.equal($$("#txns td.cat-cell.selected").length, 3);
-  assert.notEqual(document.activeElement?.tagName, "SELECT", "a drag doesn't open a dropdown");
-  assert.match($("#selBar").textContent, /3 selected/);
   key("v", { ctrlKey: true });
-  assert.deepEqual(coffees(), ["subscriptions", "subscriptions", "subscriptions"]);
-  assert.match($("#selBar").textContent, /Set 3 to Subscriptions/);
+  assert.deepEqual(coffees(), ["subscriptions", "subscriptions", "subscriptions"], "applied synchronously");
+  assert.equal($("#selBar"), null, "no bar");
+  assert.equal($$("#txns td.cat-cell.flash").length, 3, "changed cells flash");
   assert.equal($$("#txns td.cat-cell.selected").length, 3, "selection survives the paste");
 
-  // the bar's dropdown sets all of them; Undo reverts that bulk change
-  const barSel = $("#selBar select");
-  barSel.value = "dining"; fire(barSel, "change");
-  assert.deepEqual(coffees(), ["dining", "dining", "dining"]);
-  [...$$("#selBar button")].find((b) => b.textContent === "Undo").click();
-  assert.deepEqual(coffees(), ["subscriptions", "subscriptions", "subscriptions"]);
+  key("z", { ctrlKey: true });
+  assert.deepEqual(coffees(), ["", "", ""], "Ctrl+Z undoes the paste");
+  key("v", { ctrlKey: true });
   key("Delete");
   assert.deepEqual(coffees(), ["", "", ""]);
   assert.ok(rowOf("COFFEE ONE").querySelector("select").classList.contains("uncat"));
@@ -475,15 +474,18 @@ test("Category column: click opens the dropdown; drag selects; Ctrl+C / Ctrl+V; 
   mouse(cell("COFFEE TWO"), "mousedown", { shiftKey: true });
   assert.equal($$("#txns td.cat-cell.selected").length, 4);
   key("v", { ctrlKey: true });
-  assert.match($("#selBar").textContent, /Set 2 to Subscriptions · 1 split skipped/);
   assert.deepEqual(coffees(), ["subscriptions", "subscriptions", ""]);
+  assert.match(rowOf("SAFEWAY").textContent, /Split · 3/, "split untouched");
   mouse(cell("NETFLIX"), "mousedown", { ctrlKey: true });
   assert.equal($$("#txns td.cat-cell.selected").length, 3, "ctrl-click toggles one cell");
 
-  // clicking elsewhere clears the selection; edits are buffered like any other
+  // clicking elsewhere clears the selection; Esc clears the copy too
   mouse($(".brand"), "mousedown");
   assert.equal($$("#txns td.cat-cell.selected").length, 0);
-  assert.equal($("#selBar").hidden, false, "Undo stays available");
+  key("Escape");
+  assert.equal($$("#txns td.cat-cell.copied").length, 0);
+
+  // the whole paste went to the outbox in one write
   await settle();
   const states = Object.values(outboxNow().tx).map((e) => e.state.category);
   assert.ok(states.filter((c) => c === "subscriptions").length >= 2);

@@ -82,6 +82,7 @@ const handlers = {
   getAllTransactions: () => store.getAllTransactions(),
   getCategories: () => store.getCategories(),
   queueEdit: ({ op }) => getOutbox().queue(op),
+  queueEdits: ({ ops }) => getOutbox().queueMany(ops),
   flushOutbox: () => getOutbox().flush(),
   getOutbox: () => getOutbox().read(),
   clearFailedEdits: () => getOutbox().clearFailed(),

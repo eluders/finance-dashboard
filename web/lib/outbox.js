@@ -24,13 +24,18 @@ export function createOutbox({ storage, alarms, applyEdits, flushMs = 60_000, no
   const schedule = (when) => alarms?.create("flush", { when });
 
   /** op: { type: "tx", entry: { accountId, id, date, state } } | { type: "categories", doc } */
-  function queue(op) {
+  const queue = (op) => queueMany([op]);
+
+  /** Several ops with one storage read/write (bulk edits stay instant). */
+  function queueMany(ops) {
     return locked(async () => {
       const o = await read();
-      const r = ++rev;
-      if (op.type === "tx") o.tx[`${op.entry.accountId}/${op.entry.id}`] = { ...op.entry, rev: r };
-      else if (op.type === "categories") o.categories = { doc: op.doc, rev: r };
-      else throw new Error(`Unknown outbox op ${op.type}`);
+      for (const op of ops) {
+        const r = ++rev;
+        if (op.type === "tx") o.tx[`${op.entry.accountId}/${op.entry.id}`] = { ...op.entry, rev: r };
+        else if (op.type === "categories") o.categories = { doc: op.doc, rev: r };
+        else throw new Error(`Unknown outbox op ${op.type}`);
+      }
       if (!o.since) { o.since = now(); schedule(o.since + flushMs); }
       await write(o);
       return o;
@@ -84,5 +89,5 @@ export function createOutbox({ storage, alarms, applyEdits, flushMs = 60_000, no
 
   const clearFailed = () => locked(async () => { const o = await read(); o.failed = []; await write(o); return o; });
 
-  return { queue, flush, read, recover, clearFailed };
+  return { queue, queueMany, flush, read, recover, clearFailed };
 }

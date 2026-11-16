@@ -40,15 +40,8 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
     - It uses Claude Haiku by default (cheap; costs are shown). Add your Anthropic API key in Settings.
   - **Counted amount**: in a transaction's expanded row, count it as a different amount, e.g. $0 if it was reimbursed, or just your share. The bank amount is kept.
   - **Bulk categories**:
-    - On Transactions, drag down the Category column to select several rows. Shift-click extends the selection and Ctrl-click adds a single row.
-    - Ctrl+C on a cell copies its category, and Ctrl+V pastes it into everything selected. You can also use the bar at the bottom. Undo reverts the last bulk change.
-
-## Privacy and safety
-
-- The extension uses `activeTab`, so it can only see a bank page when you click its button. It has no standing access to any bank site.
-- Content scripts only read the DOM. They never click, type or submit anything.
-- **No financial data ever goes into this code repo or onto the Pages site.** The site is only code. Your transactions are fetched from the private data repo by your browser, using your token.
-- Your token is stored in browser storage: `chrome.storage.local` for the extension and `localStorage` for the dashboard site. It is never written to a repo.
+    - On Transactions, drag down the Category column (the blank strip left of each dropdown) to select several rows. Shift-click extends the selection and Ctrl-click adds a single row.
+    - Ctrl+C copies a category and Ctrl+V pastes it into everything selected, instantly. Delete clears, Ctrl+Z undoes, Esc clears the selection.
   - On the web, every Pages site under your `github.io` address shares that storage. Don't host untrusted pages there.
   - Use a fine-grained token limited to the data repo. **Forget token** in Settings removes it from the browser.
 - The dashboard's Content-Security-Policy only lets the page talk to `api.github.com` and `api.anthropic.com`. AI categorize sends only the transactions you select: date, amount, description, note and category.

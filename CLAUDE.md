@@ -35,10 +35,12 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
     - `lib/outbox.js`.
     - `ai-panel.js` + `lib/ai.js`: the AI categorize panel on Transactions, and the `#logs` tab (see below).
     - `cat-picker.js`: checkbox category picker (group boxes, All/None/All but Archive, per-row "only"), used by the transaction filter and the AI panel. No "All <group>" pseudo-entries: the user wants the bold group rows themselves to be selectable.
-    - `cell-select.js`: Excel-style multi-select on the Category column.
-      - A click opens the dropdown. Mousedown is held back so it can become a drag; the dropdown opens via `showPicker()` on release.
-      - Drag, shift-click and ctrl-click select cells. Ctrl+C/V copy and paste a category, Delete clears, Ctrl+Z undoes the last bulk change.
-      - A floating bar offers the same actions. Split rows are skipped.
+    - `cell-select.js`: Excel-style multi-select on the Category column. **No toolbar and no prompts**: the user wants pasting to be instant and in place.
+      - Each cell has a blank strip on its left (`cursor: cell`) for clicking and dragging.
+      - A click on the dropdown opens it. Mousedown is held back so it can become a drag; the dropdown opens via `showPicker()` on release.
+      - Drag, shift-click and ctrl-click select cells. Ctrl+C copies a category (the cell gets a dashed outline); Ctrl+V pastes it at once, and the changed cells flash.
+      - Delete clears, Ctrl+Z undoes the last paste or delete, Esc clears.
+      - Bulk changes go through `setTxCategories` → one `queueEdits` outbox write. AI Apply uses the same path.
     - The summary table header is frozen: the `.summary-card` is the scroll area, and its `thead th` and label column are sticky.
   - Edits (note, category, splits, categories doc) never call GitHub directly. `edits.js` applies them in memory, and `outbox.js` buffers them in localStorage. They're flushed as one commit through `store.applyEdits` about 60s after the first unsaved edit, or on "Save now" or tab close.
   - The timer only runs while a tab is open. On load, unflushed edits are overlaid on the GitHub data and then saved.

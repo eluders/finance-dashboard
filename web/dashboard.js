@@ -9,7 +9,7 @@ import { onStorageChanged } from "../extension/src/lib/platform.js";
 import { OUTBOX_KEY, pendingCount } from "./lib/outbox.js";
 import { call } from "./lib/backend.js";
 import { MODELS } from "./lib/ai.js";
-import { initCellSelect, isSelected, render as renderSelection } from "./cell-select.js";
+import { initCellSelect, isSelected, isCopied, render as renderSelection } from "./cell-select.js";
 import { initAi, renderAiPanel, renderLogs, isPanelOpen, openPanel, review, toggleProposal } from "./ai-panel.js";
 import { catPicker, pickerIds, describeSelection, UNCAT } from "./cat-picker.js";
 
@@ -29,8 +29,8 @@ initAi({
   get txns() { return txns; }, get cats() { return cats; }, get accounts() { return accounts; }, get catIdx() { return catIdx; },
   get loaded() { return loaded; },
   call, setStatus,
-  /** Category-only edit that keeps note, splits and counted amount. */
-  setCategory(t, category) { commitEdit(t, { category }); },
+  /** Category-only edits that keep note, splits and counted amount. */
+  setCategories: (items) => setTxCategories(items),
   shownRows: () => shownRows(),
   filterLabel: () => filterLabel(),
   onReviewChange: () => { if (tab === "transactions") renderTransactions(); else if (tab === "logs") renderLogs(); },
@@ -41,9 +41,7 @@ let displayedRows = [];
 initCellSelect({
   rows: () => displayedRows,
   isActive: () => tab === "transactions" && !review(),
-  setCategory: (t, category) => { commitEdit(t, { category }); refreshRow(t); },
-  catName: (id) => (id == null ? "Uncategorized" : catIdx.get(id)?.name || id),
-  catOptionsHtml: () => catOptionsHtml,
+  setCategories: (items) => { const n = setTxCategories(items); for (const { t } of items) refreshRow(t); return n; },
 });
 
 // ---------- tabs ----------
@@ -161,6 +159,21 @@ function commitEdit(t, changes) {
 
 function queueOp(op) {
   call("queueEdit", { op }).catch((e) => setStatus(`Couldn't buffer the edit locally: ${e.message}`, "bad"));
+}
+
+/**
+ * Category-only edits for many transactions at once (paste, AI apply): applied in memory now,
+ * buffered with ONE storage write. Note, splits and counted amount are untouched; split rows are skipped.
+ */
+function setTxCategories(items) {
+  const ops = [];
+  for (const { t, category } of items) {
+    if (t.splits?.length || (t.category || null) === (category || null)) continue;
+    applyState(t, { ...editableState(t), category: category || null });
+    ops.push({ type: "tx", entry: { accountId: t.accountId, id: t.id, date: t.date, state: editableState(t) } });
+  }
+  if (ops.length) call("queueEdits", { ops }).catch((e) => setStatus(`Couldn't buffer the edits locally: ${e.message}`, "bad"));
+  return ops.length;
 }
 
 function saveNow() { return call("flushOutbox").catch((e) => setStatus(e.message, "bad")); }
@@ -412,7 +425,7 @@ function renderTransactions() {
       el("col", { style: `width:${narrow ? 22 : 25}%` }),   // bank description
       el("col", { style: `width:${narrow ? 92 : 105}px` }), // amount
       el("col"),                                            // your note
-      el("col", { style: `width:${narrow ? 170 : 220}px` }), // category
+      el("col", { style: `width:${narrow ? 190 : 240}px` }), // category (incl. the blank strip for selecting)
       rv ? el("col", { style: "width:180px" }) : null),     // AI's proposal
     el("thead", {}, el("tr", {}, el("th", {}, "Account"), el("th", {}, "Date"), el("th", {}, "Description"), el("th", { class: "num" }, "Amount"), el("th", {}, "Note"),
       el("th", {}, rv ? "Before" : "Category"), rv ? el("th", { class: "after-col" }, "After (AI)") : null)),
@@ -446,7 +459,7 @@ function rowFor(t, accts = byId()) {
     el("td", { title: t.description }, t.description),
     amountCell(t),
     el("td", { class: "edit" }, note),
-    el("td", { class: `edit cat-cell${isSelected(t.id) ? " selected" : ""}` }, catCell),
+    el("td", { class: `edit cat-cell${isSelected(t.id) ? " selected" : ""}${isCopied(t.id) ? " copied" : ""}`, title: "Drag here to select several · Ctrl+C / Ctrl+V" }, catCell),
     afterCell(t),
   );
   tr.onclick = (e) => { if (!e.target.closest("input, select, button, label, td.cat-cell")) toggle(t); };

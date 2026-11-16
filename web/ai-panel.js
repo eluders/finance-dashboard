@@ -290,15 +290,17 @@ const errorsBox = (run) => el("details", { class: "warn" }, el("summary", {}, `$
 async function applyRun(run) {
   const byKey = new Map(ctx.txns.map((t) => [keyOf(t), t]));
   let applied = 0, skipped = 0;
+  const batch = [];
   for (const p of run.proposals) {
     if (!p.selected) continue;
     const t = byKey.get(p.key);
     if (!t) p.result = "no longer exists";
     else if ((t.category || null) !== p.from) p.result = `now ${catName(t.category || null)}`;
     else if (t.splits?.length) p.result = "was split since";
-    else { ctx.setCategory(t, p.to); p.result = "applied"; applied++; continue; }
+    else { batch.push({ t, category: p.to }); p.result = "applied"; applied++; continue; }
     skipped++;
   }
+  ctx.setCategories(batch);
   let notesMsg = "";
   if (run.notes?.selected) {
     try {

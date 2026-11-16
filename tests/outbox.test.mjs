@@ -71,3 +71,14 @@ test("recover() clears a stuck flushing flag after a worker restart", async () =
   await ob.recover();
   assert.equal((await ob.read()).flushing, false);
 });
+
+test("queueMany: a bulk edit is one storage write", async () => {
+  const storage = memStorage();
+  let writes = 0;
+  const set = storage.set;
+  storage.set = async (o) => { writes++; return set(o); };
+  const ob = createOutbox({ storage, alarms: { create() {} }, applyEdits: async () => ({ applied: [], failed: [] }) });
+  await ob.queueMany([entry("t1", "a"), entry("t2", "b"), entry("t3", "c")]);
+  assert.equal(writes, 1);
+  assert.equal(pendingCount(await ob.read()), 3);
+});
