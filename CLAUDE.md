@@ -30,7 +30,7 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
 - `web/`: the dashboard.
   - Files:
     - `index.html`
-    - `dashboard.js`: table, inline edits, splits, the drag-to-reorder category editor, accounts, and settings.
+    - `dashboard.js`: hash-routed tabs. `#summary`: net outflow per category per month (split parts count separately, sections at `sectionBreak` groups, cells link to filtered transactions), plus "Edit categories" mode with the drag-to-reorder editor. `#transactions`: filters by account, category or group, and month, with inline note, category and split edits. `#settings`: connection and account colors.
     - `lib/backend.js`: in-page operations and the auto-save timer.
     - `lib/outbox.js`.
   - Edits (note, category, splits, categories doc) never call GitHub directly. `edits.js` applies them in memory, and `outbox.js` buffers them in localStorage. They're flushed as one commit through `store.applyEdits` about 60s after the first unsaved edit, or on "Save now" or tab close.

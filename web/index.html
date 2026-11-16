@@ -6,32 +6,57 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://api.github.com; base-uri 'none'; form-action 'none'" />
   <meta name="referrer" content="no-referrer" />
   <meta name="robots" content="noindex" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Finance Dashboard</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="row" style="justify-content: space-between">
-    <h1>Finance Dashboard</h1>
-    <div class="row">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">Finance</div>
+      <nav class="tabs">
+        <a href="#summary" data-tab="summary">Summary</a>
+        <a href="#transactions" data-tab="transactions">Transactions</a>
+        <a href="#settings" data-tab="settings">Settings</a>
+      </nav>
+      <div class="spacer"></div>
       <span id="saveState"></span>
       <button id="saveNow" disabled>Save now</button>
-      <button id="toggleCategories">Categories ⚙</button>
-      <button id="toggleAccounts">Accounts ⚙</button>
-      <button id="toggleSettings">Settings ⚙</button>
-      <button id="reload">Reload</button>
+      <button id="reload" class="icon-btn" title="Reload from GitHub">↻</button>
     </div>
-  </div>
-  <div id="failedEdits" class="box warn" hidden><span id="failedText"></span><button id="dismissFailed">Dismiss</button></div>
-  <div id="settingsPanel" class="box panel" hidden></div>
-  <div id="categoryPanel" class="box panel" hidden></div>
-  <div id="accountPanel" class="box panel" hidden></div>
-  <div class="row" style="margin: 8px 0">
-    <select id="filterAccount"><option value="">All accounts</option></select>
-    <input id="search" placeholder="Search description or note" />
-    <span id="count" class="muted"></span>
-  </div>
-  <div id="status" class="status"></div>
-  <div id="txns"></div>
+  </header>
+
+  <main>
+    <div id="failedEdits" class="box warn" hidden><span id="failedText"></span><button id="dismissFailed">Dismiss</button></div>
+    <div id="status" class="status"></div>
+
+    <section id="tab-summary" hidden>
+      <div class="toolbar">
+        <h2>Spending by category</h2>
+        <select id="sumYear" title="Year"></select>
+        <select id="sumAccount" title="Account"><option value="">All accounts</option></select>
+        <div class="spacer"></div>
+        <button id="editCategories">Edit categories</button>
+      </div>
+      <div id="summaryBody"></div>
+    </section>
+
+    <section id="tab-transactions" hidden>
+      <div class="toolbar">
+        <select id="filterAccount" title="Account"><option value="">All accounts</option></select>
+        <select id="filterCategory" title="Category"></select>
+        <select id="filterDate" title="Date"></select>
+        <input id="search" type="search" placeholder="Search description or note" />
+        <span id="count" class="muted"></span>
+      </div>
+      <div id="txns"></div>
+    </section>
+
+    <section id="tab-settings" hidden>
+      <div id="settingsPanel" class="card"></div>
+      <div id="accountPanel" class="card"></div>
+    </section>
+  </main>
   <script type="module" src="dashboard.js"></script>
 </body>
 </html>
