@@ -14,7 +14,7 @@ A personal finance tracker in two parts, with your data kept in a private GitHub
 3. **Load the extension.**
    - Open `chrome://extensions` and turn on *Developer mode*.
    - Click *Load unpacked* and pick the `extension/` folder.
-   - Open the extension's **Options**, then enter the owner, repo and token, plus the dashboard's web address.
+   - Open the extension's **Options**, then enter the owner, repo and token.
    - Click **Test connection**, then **Initialize data repo**.
 4. **Host the dashboard.**
    - Push this code repo to GitHub.
@@ -26,11 +26,12 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
 
 ## Using it
 
-- **Extract** (extension): runs the extractor that matches the site and detects the account. Click **Compare with saved**, then **Save**.
+- **Extract** (extension): runs the extractor that matches the site, detects the account and compares with what's saved. Then click **Save**.
 - **Capture** (extension): downloads a stripped copy of the page's structure, with no scripts, amounts scrambled and account numbers masked. New site extractors are written from these captures. Put them in `samples/<institution>/`, which is gitignored.
 - **Dashboard** (web): edit categories, notes and splits.
   - Changes show instantly and are saved to GitHub as one commit about a minute later, or right away with **Save now**.
   - Drag the ☰ handles to reorder categories or move them between groups.
+  - **Counted amount**: in a transaction's expanded row, count it as a different amount, e.g. $0 if it was reimbursed, or just your share. The bank amount is kept.
 
 ## Privacy and safety
 

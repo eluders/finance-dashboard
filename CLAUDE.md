@@ -26,7 +26,7 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
   - `store.js`: data-repo operations (accounts, transactions by account/year, imports log, balances).
   - `reconcile.js`: dedupe by (date, amount) multiset plus pending→posted linking.
 - `extension/src/background.js`: message router for the popup. Import saves go through it so they survive the popup closing.
-- `extension/src/popup/`: extract → compare → save; capture. The Dashboard button opens `settings.dashboardUrl`, which is set in Options.
+- `extension/src/popup/`: Extract (which compares with saved data right away) → Save; Capture. There's no dashboard link: the user wants the extension to be extraction only.
 - `web/`: the dashboard.
   - Files:
     - `index.html`
@@ -38,6 +38,7 @@ Storage for both is a private GitHub data repo. Don't put dashboard features in 
   - To run it locally, start a static server at the repo root (e.g. `npx serve .`) and open `/web/`.
   - Deploy: `.github/workflows/pages.yml` publishes only `web/` and `extension/src/lib/` on push to main.
 - `tests/`: `npm test`. `tests/helpers/run-extractor.mjs` runs the content scripts in jsdom, the same way the popup injects them. `tests/fixtures/` holds **synthetic** HTML that copies real page structure.
+- `tools/apply-csv-labels.mjs`: `node tools/apply-csv-labels.mjs transactions.csv --repo owner/data-repo [--write]`. It copies labels from the user's spreadsheet (note, category, splits, overrides) onto saved transactions, matching on account last 4 + amount + date (±4 days). It only applies unambiguous matches, never overwrites dashboard edits, and writes a `*-unmatched.csv` with a reason per row. Re-run it after importing more history.
 - `tools/try-samples.mjs`: `node tools/try-samples.mjs samples/wellsfargo --rows` runs the extractors against real local captures. Use it after any extractor change.
 
 ## Wells Fargo notes (from captures, 2026-11-15)

@@ -20,15 +20,9 @@ init().catch((e) => status(e.message, "bad"));
 async function init() {
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   $("pageInfo").textContent = tab?.url ? new URL(tab.url).hostname : "";
-  $("openDashboard").onclick = async () => {
-    const { settings = {} } = await chrome.storage.local.get("settings");
-    if (settings.dashboardUrl) chrome.tabs.create({ url: settings.dashboardUrl });
-    else chrome.runtime.openOptionsPage(); // set the dashboard's web address there
-  };
   $("openOptions").onclick = () => chrome.runtime.openOptionsPage();
   $("extract").onclick = () => run(extract);
   $("capture").onclick = () => run(capture);
-  $("compare").onclick = () => run(compare);
   $("save").onclick = () => run(save);
 
   const { settings, lastSave } = await chrome.storage.local.get(["settings", "lastSave"]);
@@ -84,6 +78,7 @@ async function showExtraction() {
   $("warnings").textContent = (x.warnings || []).join(" ");
   accounts = await call("listAccounts");
   detectAccount();
+  if (target.mode !== "manual") await compare(); // the account is known: compare right away
 }
 
 /** Picks the account from the page itself (institution + last 4). Never defaults to some other account. */
@@ -123,7 +118,10 @@ function detectAccount() {
     el("input", { id: "naName", placeholder: "display name", size: 22 }),
     el("input", { id: "naLast4", placeholder: "last 4", size: 5 }),
   );
-  sel.onchange = () => { fields.hidden = sel.value !== "__new"; clearPlan(); };
+  // compare as soon as the account is chosen (for a new account, once its fields are valid)
+  const tryCompare = () => { clearPlan(); try { resolveAccount(); } catch (_) { return; } run(compare); };
+  sel.onchange = () => { fields.hidden = sel.value !== "__new"; tryCompare(); };
+  fields.onchange = tryCompare;
   box.append(el("div", { class: "warn" }, "Couldn't read an account number on this page. Choose the account carefully."), el("div", { class: "row" }, "Account: ", sel), fields);
 }
 

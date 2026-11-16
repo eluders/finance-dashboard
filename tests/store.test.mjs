@@ -145,3 +145,24 @@ test("refuses a public repo", async () => {
   await assert.rejects(store.commitImport(planFor(extracted, { newAccount: acct })), /PUBLIC/);
   assert.equal(gh.files().size, 0);
 });
+
+test("counted-amount override: splits add up to the override; $0 = not counted; bank amount untouched", async () => {
+  await store.commitImport(planFor(extracted, { newAccount: acct }));
+  const t = (await store.getAllTransactions()).find((x) => x.description === "CHECK # 101"); // -1200.00
+  const edit = (patch) => store.updateTransaction({ accountId: acct.id, id: t.id, date: t.date, patch });
+
+  let s = await edit({ overrideCents: -30000, splits: [{ id: "a", amountCents: -10000, category: "utilities" }, { id: "b", remainder: true, category: "housing" }] });
+  assert.equal(s.amountCents, -120000, "bank amount kept for matching");
+  assert.equal(s.overrideCents, -30000);
+  assert.deepEqual(s.splits.map((x) => x.amountCents), [-10000, -20000], "remainder fills up to the counted amount");
+
+  await assert.rejects(edit({ overrideCents: 5000 }), /same direction/);
+  await assert.rejects(edit({ overrideCents: 0 }), /can't be split/, "splits must go first");
+  s = await edit({ splits: [], overrideCents: 0, category: "gifts" });
+  assert.equal(s.overrideCents, 0);
+  assert.equal(s.category, "gifts");
+  s = await edit({ overrideCents: null });
+  assert.equal(s.overrideCents, undefined);
+  s = await edit({ overrideCents: -120000 });
+  assert.equal(s.overrideCents, undefined, "override equal to the bank amount is dropped");
+});

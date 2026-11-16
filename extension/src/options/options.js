@@ -1,6 +1,6 @@
 import { call } from "../lib/ui.js";
 
-const FIELDS = ["ghOwner", "ghRepo", "ghBranch", "ghToken", "dashboardUrl"];
+const FIELDS = ["ghOwner", "ghRepo", "ghBranch", "ghToken"];
 const $ = (id) => document.getElementById(id);
 const status = (msg, cls = "") => { $("status").className = `status ${cls}`; $("status").textContent = msg; };
 

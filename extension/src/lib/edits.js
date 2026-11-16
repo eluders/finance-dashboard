@@ -5,10 +5,19 @@
 // of edits (categorize → split → unsplit …) collapses to one entry with an unambiguous result.
 import { resolveSplits } from "./splits.js";
 
-export const EDITABLE_FIELDS = ["note", "category", "splits"];
+export const EDITABLE_FIELDS = ["note", "category", "splits", "overrideCents"];
+
+/**
+ * The amount that counts in summaries: the user's override (e.g. 0 for something reimbursed) or
+ * the bank amount. The bank amount itself is never changed, so dedupe/matching keep working.
+ */
+export const trackedCents = (t) => (Number.isInteger(t.overrideCents) ? t.overrideCents : t.amountCents);
 
 export function editableState(t) {
-  return { note: t.note || "", category: t.category || null, splits: t.splits?.length ? t.splits.map((s) => ({ ...s })) : [] };
+  return {
+    note: t.note || "", category: t.category || null, splits: t.splits?.length ? t.splits.map((s) => ({ ...s })) : [],
+    overrideCents: Number.isInteger(t.overrideCents) ? t.overrideCents : null,
+  };
 }
 
 /**
@@ -20,9 +29,19 @@ export function applyState(t, state, now = new Date().toISOString(), { lenient =
   const note = String(state.note || "").trim();
   if (note) t.note = note; else delete t.note;
 
+  if ("overrideCents" in state) {
+    const o = state.overrideCents;
+    if (o == null) delete t.overrideCents;
+    else if (!Number.isInteger(o)) throw new Error("The counted amount must be a whole number of cents.");
+    else if (o !== 0 && Math.sign(o) !== Math.sign(t.amountCents)) throw new Error("The counted amount must go the same direction as the transaction.");
+    else if (o === t.amountCents) delete t.overrideCents; // same as the bank amount: no override
+    else t.overrideCents = o;
+  }
+
   let category = state.category || null;
   if (state.splits?.length) {
-    const r = resolveSplits(t.amountCents, state.splits);
+    if (trackedCents(t) === 0) throw new Error("A transaction counted as $0 can't be split. Clear the counted amount first.");
+    const r = resolveSplits(trackedCents(t), state.splits);
     if (!r.ok && !lenient) throw new Error(r.error);
     t.splits = r.splits.map(({ id, amountCents, category: c, note: n, remainder }) => ({
       id, amountCents, category: c || null, ...(n?.trim() ? { note: n.trim() } : {}), ...(remainder ? { remainder: true } : {}),

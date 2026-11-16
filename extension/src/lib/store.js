@@ -1,7 +1,7 @@
 // Data-repo layout and operations. See DATA_LAYOUT.md for the schema.
 import { GitHubRepo } from "./github.js";
 import { resolveSplits } from "./splits.js";
-import { applyState, editableState, EDITABLE_FIELDS } from "./edits.js";
+import { applyState, editableState, EDITABLE_FIELDS, trackedCents } from "./edits.js";
 import { normalizeCategories, validateCategories } from "./categories.js";
 import { storage } from "./platform.js";
 
@@ -307,7 +307,7 @@ export async function commitImport(plan) {
       });
       // amount may have changed (pending tip): re-balance the user's splits
       if (t.splits?.length) {
-        const r = resolveSplits(t.amountCents, t.splits);
+        const r = resolveSplits(trackedCents(t), t.splits);
         if (r.ok) { t.splits = r.splits; delete t.splitsNeedReview; } else t.splitsNeedReview = true;
       }
     }

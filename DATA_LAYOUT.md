@@ -36,7 +36,9 @@ Planned: `holdings/<accountId>.json` (positions snapshots), `investment-transact
   "category": null,                // category id (null when split; the splits carry categories)
   "categorySource": null,          // "rule" | "ai" | "user"
   "note": "optional, user-written",
-  "splits": [                      // optional; amounts signed like the parent and always sum to it
+  "overrideCents": 0,              // optional "counted amount": what summaries count instead of amountCents
+                                   // (0 = reimbursed / not tracked). amountCents stays the bank amount for matching.
+  "splits": [                      // optional; signed like the parent; sum to the counted amount (override or bank amount)
     { "id": "…", "amountCents": -1250, "category": "health", "note": "pharmacy" },
     { "id": "…", "amountCents": -6750, "category": "groceries", "remainder": true }  // at most one; = total − others
   ],

@@ -95,7 +95,7 @@ test("closing the tab with unsaved changes asks for confirmation AND starts savi
 
 test("split with a Remaining row: only one remainder, live math, applied locally", async () => {
   rowOf("SAFEWAY").children[2].click(); // expand
-  $("tr.detail button").click(); // "Split transaction…"
+  button("tr.detail", "Split transaction…").click();
   const rows = () => $$("tr.detail .split-table tr");
   assert.equal(rows().length, 2);
   assert.ok(rows()[1].querySelector(".rem-toggle.on"), "second row starts as Remaining");
@@ -240,6 +240,28 @@ test("unsaved edits survive a reload (overlaid from the outbox)", async () => {
   await settle();
   assert.equal(rowOf("NETFLIX").querySelector("select").value, "entertainment", "still shown after reload, before saving");
   assert.equal((await onGitHub("NETFLIX")).category, "subscriptions");
+});
+
+test("counted-amount override from the expanded row: struck-through bank amount, summary counts the override", async () => {
+  await go("#transactions");
+  rowOf("NETFLIX").children[2].click(); // expand
+  const detail = () => rowOf("NETFLIX").nextElementSibling;
+  const btn = (text) => [...detail().querySelectorAll(".override-editor button")].find((b) => b.textContent === text);
+  btn("Don't count ($0)").click();
+  assert.match(rowOf("NETFLIX").children[3].textContent, /-\$12\.99\s+\$0\.00/);
+  await go("#summary");
+  assert.equal(sumRow("Entertainment").children[1].textContent, "", "not counted any more");
+  await go("#transactions");
+  detail().querySelector(".override-editor input").value = "5";
+  btn("Set").click();
+  assert.match(rowOf("NETFLIX").children[3].textContent, /-\$5\.00$/);
+  btn("Use bank amount").click();
+  assert.equal(rowOf("NETFLIX").children[3].textContent, "-$12.99");
+  // a split transaction can't be zeroed until the split is removed (and nothing half-applies)
+  const sw = rowOf("SAFEWAY").nextElementSibling;
+  [...sw.querySelectorAll(".override-editor button")].find((b) => b.textContent === "Don't count ($0)").click();
+  assert.match(rowOf("SAFEWAY").nextElementSibling.querySelector(".override-editor .bad").textContent, /can't be split/);
+  assert.match(rowOf("SAFEWAY").textContent, /Split · 3/);
 });
 
 test("Settings tab: connection (token never shown back, can be forgotten) and account colors", async () => {

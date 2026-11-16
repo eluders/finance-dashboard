@@ -4,7 +4,7 @@
 import { fmtMoney, fmtDate, el, accountBadge, accountColor } from "../extension/src/lib/ui.js";
 import { resolveSplits, parseMoneyInput } from "../extension/src/lib/splits.js";
 import { categoryIndex, uniqueId, validateCategories } from "../extension/src/lib/categories.js";
-import { applyState, editableState } from "../extension/src/lib/edits.js";
+import { applyState, editableState, trackedCents } from "../extension/src/lib/edits.js";
 import { onStorageChanged } from "../extension/src/lib/platform.js";
 import { OUTBOX_KEY, pendingCount } from "./lib/outbox.js";
 import { call } from "./lib/backend.js";
@@ -122,7 +122,9 @@ const FLUSH_MS = 60_000; // must match lib/outbox.js default
 
 /** Applies an edit to the in-memory transaction now and queues its final state for GitHub. */
 function commitEdit(t, changes) {
-  applyState(t, { ...editableState(t), ...changes }); // throws on an invalid split (UI prevents that)
+  const next = { ...editableState(t), ...changes };
+  applyState(structuredClone(t), next); // validate on a copy first: a rejected edit must not half-apply
+  applyState(t, next);
   queueOp({ type: "tx", entry: { accountId: t.accountId, id: t.id, date: t.date, state: editableState(t) } });
 }
 
@@ -187,7 +189,7 @@ function monthlyTotals(year, accountId) {
     const m = +t.date.slice(5, 7) - 1;
     months.add(m);
     if (t.splits?.length) for (const s of t.splits) add(s.category, m, s.amountCents);
-    else add(t.category, m, t.amountCents);
+    else if (trackedCents(t)) add(t.category, m, trackedCents(t));
   }
   return { sums, months: [...months].sort((a, b) => a - b) };
 }
@@ -305,7 +307,7 @@ function renderTransactions() {
   const q = $("search").value.toLowerCase();
   const rows = txns.filter((t) => (!acct || t.accountId === acct) && t.date.startsWith(dateF) && inCategory(t, catF)
     && (!q || t.description.toLowerCase().includes(q) || (t.note || "").toLowerCase().includes(q) || (t.merchant || "").toLowerCase().includes(q)));
-  const net = rows.reduce((s, t) => s + t.amountCents, 0);
+  const net = rows.reduce((s, t) => s + trackedCents(t), 0);
   $("count").textContent = `${rows.length} transaction${rows.length === 1 ? "" : "s"} · net ${fmtMoney(net)}`;
   const accts = byId();
   rowEls.clear();
@@ -352,12 +354,20 @@ function rowFor(t, accts = byId()) {
     el("td", {}, accountBadge(accts[t.accountId] || { id: t.accountId, name: t.accountId })),
     el("td", {}, fmtDate(t.date)),
     el("td", { title: t.description }, t.description),
-    el("td", { class: `num ${t.amountCents > 0 ? "good" : ""}` }, fmtMoney(t.amountCents)),
+    amountCell(t),
     el("td", { class: "edit" }, note),
     el("td", { class: "edit" }, catCell),
   );
   tr.onclick = (e) => { if (!e.target.closest("input, select, button")) toggle(t); };
   return tr;
+}
+
+/** Bank amount, or the counted amount with the bank amount struck through when overridden. */
+function amountCell(t) {
+  const n = trackedCents(t);
+  if (n === t.amountCents) return el("td", { class: `num ${n > 0 ? "good" : ""}` }, fmtMoney(n));
+  return el("td", { class: "num overridden", title: `Bank amount ${fmtMoney(t.amountCents)}, counted as ${fmtMoney(n)}` },
+    el("s", { class: "muted" }, fmtMoney(t.amountCents)), " ", el("span", { class: n > 0 ? "good" : "" }, fmtMoney(n)));
 }
 
 function refreshRow(t) {
@@ -399,14 +409,42 @@ function detailRow(t) {
         kv("Bank reference", t.bankRef),
         kv("Imported", `${new Date(t.importedAt).toLocaleString()} · ${t.importId}`),
       ),
-      el("div", { style: "flex:1.4" }, splitEditor(t)),
+      el("div", { style: "flex:1.4" }, overrideEditor(t), splitEditor(t)),
     ),
   ));
 }
 
+// ---------- counted-amount override ----------
+/** "Count this as $X": e.g. 0 for something reimbursed / not worth tracking, or only your share. */
+function overrideEditor(t) {
+  const sign = t.amountCents < 0 ? -1 : 1;
+  const has = Number.isInteger(t.overrideCents);
+  const input = el("input", { class: "split-amount", value: has ? (Math.abs(t.overrideCents) / 100).toFixed(2) : "", placeholder: (Math.abs(t.amountCents) / 100).toFixed(2), inputmode: "decimal" });
+  const msg = el("span", { class: "muted" });
+  const apply = (cents) => {
+    try { commitEdit(t, { overrideCents: cents }); refreshRow(t); }
+    catch (e) { msg.className = "bad"; msg.textContent = e.message; }
+  };
+  const set = el("button", {}, "Set");
+  set.onclick = () => {
+    const v = parseMoneyInput(input.value);
+    if (v == null) { msg.className = "bad"; msg.textContent = "Enter an amount (0 to not count it)."; return; }
+    apply(v * sign);
+  };
+  input.onkeydown = (e) => { if (e.key === "Enter") set.click(); };
+  const zero = el("button", { title: "Reimbursed, returned, or not worth tracking" }, "Don't count ($0)");
+  zero.onclick = () => apply(0);
+  const clear = has ? Object.assign(el("button", {}, "Use bank amount"), { onclick: () => apply(null) }) : null;
+  return el("div", { class: "override-editor" },
+    el("div", {}, el("b", {}, "Counted amount"), el("span", { class: "muted" }, has ? `  (bank: ${fmtMoney(t.amountCents)})` : "  Override what this counts as in the summary.")),
+    el("div", { class: "row", style: "margin-top:4px" }, "$", input, set, zero, clear, msg));
+}
+
 // ---------- split editor ----------
 function splitEditor(t) {
-  const sign = t.amountCents < 0 ? -1 : 1;
+  const total = trackedCents(t);
+  const sign = total < 0 ? -1 : 1;
+  if (total === 0) return el("div", { class: "split-editor muted" }, "Counted as $0, so there's nothing to split.");
   const fromSaved = () => (t.splits || []).map((s) => ({
     id: s.id, category: s.category || "", note: s.note || "", remainder: !!s.remainder,
     amount: s.remainder ? "" : (Math.abs(s.amountCents) / 100).toFixed(2),
@@ -468,7 +506,7 @@ function splitEditor(t) {
     if (remove) remove.onclick = () => { commitEdit(t, { splits: [] }); refreshRow(t); };
 
     function totals() {
-      const r = resolveSplits(t.amountCents, toSplits());
+      const r = resolveSplits(total, toSplits());
       for (const s of r.splits) if (s.remainder) {
         const cell = remCells.get(s.id);
         if (cell) { cell.textContent = Number.isFinite(s.amountCents) ? (Math.abs(s.amountCents) / 100).toFixed(2) : "—"; cell.classList.toggle("bad", !r.ok); }
@@ -476,7 +514,7 @@ function splitEditor(t) {
       const incomplete = rows.some((x) => !x.remainder && parseMoneyInput(x.amount) == null);
       summary.className = `split-summary ${r.ok ? "good" : incomplete ? "muted" : "bad"}`;
       summary.textContent = r.ok
-        ? `Adds up to ${fmtMoney(t.amountCents)} ✓`
+        ? `Adds up to ${fmtMoney(total)} ✓`
         : incomplete ? "Enter an amount on each row (or mark one as Remaining)."
         : r.unassignedCents ? `${fmtMoney(Math.abs(r.unassignedCents))} ${Math.sign(r.unassignedCents) === sign ? "left to assign" : "over"} · ${r.error}` : r.error;
       save.disabled = !r.ok || rows.length < 2;
@@ -491,7 +529,7 @@ function splitEditor(t) {
     };
 
     wrap.append(
-      el("div", { style: "margin-bottom:4px" }, el("b", {}, `Split ${fmtMoney(t.amountCents)}`), t.splitsNeedReview ? el("span", { class: "warn" }, "  ⚠ amount changed when this posted; check the rows") : ""),
+      el("div", { style: "margin-bottom:4px" }, el("b", {}, `Split ${fmtMoney(total)}`), t.splitsNeedReview ? el("span", { class: "warn" }, "  ⚠ amount changed when this posted; check the rows") : ""),
       el("table", { class: "split-table" }, body),
       summary,
       el("div", { class: "row", style: "margin-top:6px" }, add, save, cancel, remove),

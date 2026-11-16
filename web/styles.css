@@ -105,6 +105,8 @@ button.icon { padding: 2px 6px; font-size: 11px; line-height: 1.2; }
 .rem-toggle.on, .break-toggle.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 .split-summary { margin-top: 4px; font-size: 12px; }
+.override-editor { margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+td.overridden s { font-size: 11px; }
 
 /* category editor */
 .cat-group { border-top: 1px solid var(--line); padding: 8px 0; }
