@@ -31,7 +31,6 @@ After you edit the extension's code, reload it in `chrome://extensions`. To try 
 - **Dashboard** (web): edit categories, notes and splits.
   - Changes show instantly and are saved to GitHub as one commit about a minute later, or right away with **Save now**.
   - Drag the ☰ handles to reorder categories or move them between groups.
-  - **Minimize / Maximize** (Summary): categories are split into things to keep low (expenses) and things to grow (income, giving, saving, investing). In Edit categories, the left column is Minimize and the right is Maximize; drag groups or categories across.
   - **Predict** (Summary): enter predicted amounts per category per month. A Monthly amount fills and locks every month; otherwise enter single months (one-offs) and the average is their total over 12. The normal view shows a **Predicted / mo** column. Predicted numbers are orange. Switching between Actual and Predict keeps your place in the table.
   - **Financial year**: Nov–Oct by default, named by the year it ends in (2027 = Nov 2026 – Oct 2027). Change the start month in Settings.
   - **Group colors**: pick a color for each group in Edit categories; the Summary tints that group's rows.

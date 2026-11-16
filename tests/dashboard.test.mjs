@@ -138,14 +138,14 @@ test("split with a Remaining row: only one remainder, live math, applied locally
 
 test("summary: per-category monthly sums (split parts counted separately), group + subtotal rows", async () => {
   await go("#summary");
-  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Total", "Avg / mo", "Predicted / mo"], "only months with data");
-  assert.deepEqual(sumCells("Subscriptions"), ["$13", "$13", "$13", ""]);
-  assert.deepEqual(sumCells("Groceries"), ["$60", "$60", "$60", ""]);
-  assert.deepEqual(sumCells("Health & Medical"), ["$13", "$13", "$13", ""]); // the $12.50 split part
+  assert.deepEqual($$("#summaryBody thead th").map((th) => th.textContent), ["Category", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Total", "Avg / mo", "Predicted / mo"], "all 12 months of the financial year, even ones still ahead");
+  assert.deepEqual(sumCells("Subscriptions"), ["$13", ...Array(11).fill(""), "$13", "$13", ""]);
+  assert.deepEqual(sumCells("Groceries"), ["$60", ...Array(11).fill(""), "$60", "$60", ""]);
+  assert.deepEqual(sumCells("Health & Medical"), ["$13", ...Array(11).fill(""), "$13", "$13", ""]); // the $12.50 split part
   assert.equal(sumRow("Food").classList.contains("group-row"), true);
-  assert.deepEqual(sumCells("Food"), ["$60", "$60", "$60", ""]);
-  assert.deepEqual(sumCells("Subtotal"), ["$85", "$85", "$85", ""]); // 12.99 + 12.50 + 60 = 85.49
-  assert.deepEqual(sumCells("Uncategorized"), ["$8", "$8", "$8", ""]); // the $7.50 remainder has no category
+  assert.deepEqual(sumCells("Food"), ["$60", ...Array(11).fill(""), "$60", "$60", ""]);
+  assert.deepEqual(sumCells("Subtotal"), ["$85", ...Array(11).fill(""), "$85", "$85", ""]); // 12.99 + 12.50 + 60 = 85.49
+  assert.deepEqual(sumCells("Uncategorized"), ["$8", ...Array(11).fill(""), "$8", "$8", ""]); // the $7.50 remainder has no category
   assert.equal(sumCells("Travel").join(""), "", "unused categories are listed, blank");
 });
 
@@ -530,41 +530,14 @@ test("Category column: blank strip + drag select; instant Ctrl+C / Ctrl+V with n
   assert.ok(states.filter((c) => c === "subscriptions").length >= 2);
 });
 
-test("Minimize/Maximize: editor columns with cross-side drag; summary toggle; Predict grid with monthly lock + one-offs", async () => {
+test("Predict grid: monthly lock + one-offs; group sums; predicted column on Actual; no Minimize/Maximize", async () => {
   await go("#summary");
-  if ($$("#sumMode button.on")[0]?.dataset.v !== "actual") button("#sumMode", "Actual").click();
+  if ($("#sumMode button.on")?.dataset.v !== "actual") button("#sumMode", "Actual").click();
+  assert.equal($("#sumSide"), null, "the Minimize/Maximize toggle is gone");
   $("#editCategories").click();
-  assert.equal($("#sumSide").hidden, true, "toggles hidden while editing");
-  const col = (side) => $(`#summaryBody .cat-groups[data-side=${side}]`);
-  assert.equal(col("maximize").querySelectorAll(".cat-group").length, 0);
-  assert.match(col("maximize").textContent, /Drag groups here/);
-  const groupWith = (catName) => $$("#summaryBody .cat-group").find((g) => [...g.querySelectorAll(".cat-row input")].some((i) => i.value === catName));
-  const travelGroup = groupWith("Travel");
-  const travelGroupName = travelGroup.querySelector(".cat-group-name").value;
-
-  // drag the Travel group into the (empty) Maximize column, then drag Groceries into it too
-  dragTo(travelGroup.querySelector(":scope > .row .drag-handle"), col("maximize"), 1);
-  assert.equal(col("maximize").querySelectorAll(".cat-group").length, 1);
-  const groceries = $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === "Groceries");
-  dragTo(groceries.querySelector(".drag-handle"), col("maximize").querySelector(".cat-list"), 1);
-  assert.equal(groupWith("Groceries"), groupWith("Travel"), "a category crosses sides into a group there");
-  // and back: a category can cross from Maximize into a Minimize group
-  const g2 = $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === "Groceries");
-  dragTo(g2.querySelector(".drag-handle"), col("minimize").querySelector(".cat-group .cat-list"), -1);
-  assert.ok(col("minimize").contains(groupWith("Groceries")));
-  const g3 = $$("#summaryBody .cat-row").find((r) => r.querySelector("input").value === "Groceries");
-  dragTo(g3.querySelector(".drag-handle"), col("maximize").querySelector(".cat-list"), 1);
-  button("#summaryBody", "Save categories").click();
-
-  // summary: Minimize shows everything but that group; Maximize shows only it
-  assert.equal($("#sumSide").hidden, false);
-  assert.equal(sumRow(travelGroupName), undefined, "on Minimize by default");
-  button("#sumSide", "Maximize").click();
-  assert.ok($("#sumSide button.on").textContent === "Maximize");
-  assert.ok(sumRow(travelGroupName) && sumRow("Groceries"), "the Maximize side");
-  assert.equal(sumRow("Subscriptions"), undefined);
-  assert.equal(sumRow("Uncategorized"), undefined, "Uncategorized is a Minimize row");
-  assert.ok(!sumRow("Groceries").children[1].classList.contains("good"), "Maximize shows sizes, not green 'money in'");
+  assert.equal($$("#summaryBody .cat-groups").length, 1, "one column of groups");
+  button("#summaryBody", "Cancel").click();
+  const travelGroupName = "Food"; // Groceries' group
 
   // Predict: Monthly fills and locks all 12 months
   button("#sumMode", "Predict").click();
@@ -587,7 +560,7 @@ test("Minimize/Maximize: editor columns with cross-side drag; summary toggle; Pr
   g[7].value = "240.50"; fire(g[7], "change");
   assert.deepEqual(tds("Groceries").slice(-2), ["$1,441", "$120"]);
   assert.equal(g[1].readOnly, false);
-  assert.deepEqual(tds(travelGroupName).slice(-2), ["$2,641", "$220"], "group row sums its categories");
+  assert.deepEqual(tds(travelGroupName).slice(-2), ["$1,441", "$120"], "group row sums its categories");
   assert.ok(sumRow("Groceries").querySelector("td.pred") && $("#summaryBody .pred-input"), "predicted values use the orange class");
   g[8].value = "abc"; fire(g[8], "change");
   assert.equal(g[8].value, "", "bad input is put back");
@@ -604,19 +577,17 @@ test("Minimize/Maximize: editor columns with cross-side drag; summary toggle; Pr
   const last = sumRow("Groceries").lastElementChild;
   assert.equal(last.textContent, "$120");
   assert.ok(last.classList.contains("pred"));
-  assert.equal(sumRow(travelGroupName).lastElementChild.textContent, "$245");
+  assert.equal(sumRow(travelGroupName).lastElementChild.textContent, "$120");
 
   // saved with everything else: one commit with budget.json
   await settle();
   assert.ok(outboxNow().budget, "buffered in the outbox");
   $("#saveNow").click();
   await settle();
-  assert.match(gh.log()[0], /categories \+ budget/);
+  assert.match(gh.log()[0], /budget/);
   const saved = JSON.parse(gh.files().get("budget.json"));
   assert.deepEqual(saved.years[year].travel, { months: [40000, ...Array(11).fill(10000)] });
   assert.deepEqual(saved.years[year].groceries.months.slice(5, 7), [120000, 24050]);
-  const savedCats = await store.getCategories();
-  assert.equal(savedCats.groups.find((x) => x.name === travelGroupName).side, "maximize");
 
   // reload: budget comes back from GitHub
   $("#reload").click();
@@ -627,7 +598,6 @@ test("Minimize/Maximize: editor columns with cross-side drag; summary toggle; Pr
   gm.value = "50"; fire(gm, "change"); // left unsaved for the export test
   button("#sumMode", "Actual").click();
   assert.equal(sumRow("Groceries").lastElementChild.textContent, "$50");
-  button("#sumSide", "Minimize").click();
 });
 
 test("financial year: Nov–Oct by default, named by the year it ends in; adjustable in Settings; group colors", async () => {
@@ -666,7 +636,8 @@ test("financial year: Nov–Oct by default, named by the year it ends in; adjust
   await go("#summary");
   $("#sumYear").value = "2026"; fire($("#sumYear"), "change");
   assert.equal($("#sumRange").textContent, "", "calendar years need no range");
-  assert.equal($$("#summaryBody thead th")[1].textContent, "Nov");
+  assert.deepEqual([$$("#summaryBody thead th")[1].textContent, $$("#summaryBody thead th")[12].textContent], ["Jan", "Dec"]);
+  assert.ok(sumRow("Subscriptions").children[11].textContent, "Nov 2026 spending in calendar 2026's November column");
   await go("#settings");
   $("#sFyStart").value = "11"; fire($("#sFyStart"), "change");
   await settle();

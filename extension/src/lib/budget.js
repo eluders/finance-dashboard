@@ -1,7 +1,6 @@
 // Predicted amounts per category per month (budget.json in the data repo).
 //   { version: 1, years: { "2026": { "<categoryId>": { monthly: 12000 } | { months: [cents|null × 12] } } } }
-// Amounts are positive cents in the summary's sense: spending for minimize categories, the size of
-// the flow for maximize ones (income, giving, investing).
+// Amounts are positive cents in the summary's sense (net spending).
 // `monthly` fills every month and locks them. Without it, individual months are entered and the
 // average is their sum over 12, so a one-off (a trip in June) spreads across the year.
 //
